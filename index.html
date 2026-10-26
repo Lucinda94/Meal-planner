@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Meal planner</title>
+    <meta name="description" content="Plan the week's dinners and build a shopping list." />
+    <meta name="theme-color" content="#a84324" />
+    <meta name="color-scheme" content="light" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Meals" />
+    <!-- Relative URLs so this works at /Meal-planner/ on GitHub Pages. -->
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <a class="skip" href="#main">Skip to content</a>
+      <header class="topbar">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+            <circle cx="24" cy="24" r="22" fill="#fff6ec" />
+            <path d="M13 22h22c0 8.5-4.6 14-11 14s-11-5.5-11-14z" fill="none" stroke="#2f6a4a" stroke-width="2.4" stroke-linejoin="round" />
+            <path d="M16 22h16" fill="none" stroke="#24563c" stroke-width="2.4" stroke-linecap="round" />
+            <path d="M20 16c.8-2.4 2.4-2.4 3.2 0M25 15c.8-2.4 2.4-2.4 3.2 0" fill="none" stroke="#a84324" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </span>
+        <div>
+          <h1>Meal planner</h1>
+          <p>Dinners for the week, then one shop.</p>
+        </div>
+      </header>
+
+      <main id="main">
+        <section id="panel-week" data-panel="week" role="tabpanel" aria-labelledby="tab-week">
+          <h2 class="sr-only">Week plan</h2>
+          <p class="intro">Tap a day, then type a name, a person, or an ingredient.</p>
+          <div class="week-actions">
+            <button type="button" class="btn primary" id="see-shop">See shopping list</button>
+            <button type="button" class="btn ghost" id="clear-week">Clear the week</button>
+          </div>
+          <div id="days"></div>
+          <p class="footnote">Your plan is saved on this phone.</p>
+        </section>
+
+        <section id="panel-recipes" data-panel="recipes" role="tabpanel" aria-labelledby="tab-recipes" hidden>
+          <h2 class="sr-only">Recipes</h2>
+          <label class="search" for="recipe-search">
+            <span class="sr-only">Search recipes</span>
+            <input
+              id="recipe-search"
+              type="text"
+              placeholder="Search recipes"
+              enterkeyhint="search"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+          <p id="recipe-count" class="count"></p>
+          <div id="recipe-list"></div>
+        </section>
+
+        <section id="panel-shop" data-panel="shop" role="tabpanel" aria-labelledby="tab-shop" hidden>
+          <h2 class="sr-only">Shopping list</h2>
+          <div class="toggle-card">
+            <label class="switch">
+              <span>Include optional extras</span>
+              <input type="checkbox" id="include-optional" />
+            </label>
+            <label class="switch">
+              <span>Include dried herbs and spices</span>
+              <input type="checkbox" id="include-spices" />
+            </label>
+          </div>
+          <p id="shop-summary" class="count"></p>
+          <div id="shop-notices"></div>
+          <div id="shop-aisles"></div>
+          <button type="button" class="btn ghost" id="clear-ticks" hidden>Clear ticks</button>
+          <p class="footnote">Ticks are saved on this phone.</p>
+        </section>
+      </main>
+
+      <nav class="tabbar" aria-label="Sections">
+        <div class="tablist" role="tablist">
+          <button type="button" class="tab" id="tab-week" role="tab" data-tab="week" aria-controls="panel-week" aria-selected="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Week plan</span>
+          </button>
+          <button type="button" class="tab" id="tab-recipes" role="tab" data-tab="recipes" aria-controls="panel-recipes" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h8.5A2.5 2.5 0 0 1 18 7v12.5H8.5A2.5 2.5 0 0 0 6 22V6.5A2 2 0 0 1 8 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 4.5h.5A2 2 0 0 1 10.5 6.5V20" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            <span>Recipes</span>
+          </button>
+          <button type="button" class="tab" id="tab-shop" role="tab" data-tab="shop" aria-controls="panel-shop" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 8h11l-.8 10.2a2 2 0 0 1-2 1.8H9.3a2 2 0 0 1-2-1.8L6.5 8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6.8A3 3 0 0 1 12 3.8 3 3 0 0 1 15 6.8V8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Shopping list</span>
+            <span id="shop-badge" class="badge" hidden></span>
+          </button>
+        </div>
+      </nav>
+    </div>
+
+    <dialog id="clear-dialog" aria-labelledby="clear-title">
+      <h2 id="clear-title">Clear the week?</h2>
+      <p>This takes the dinner off every day. Your recipes stay in the list.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="cancel-clear">Keep the week</button>
+        <button type="button" class="btn primary" id="confirm-clear">Clear the week</button>
+      </div>
+    </dialog>
+
+    <noscript>
+      <p class="notice static-note">Meal planner needs JavaScript turned on.</p>
+    </noscript>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
