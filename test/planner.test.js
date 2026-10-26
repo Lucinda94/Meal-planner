@@ -5,13 +5,21 @@ import {
   AISLES,
   MISSING_INGREDIENTS,
   aisleFor,
+  applyRecipeOverlay,
   buildShoppingList,
+  clearPlannedRecipe,
   defaultWeek,
   emptyWeek,
   filterRecipes,
   formatMealGroup,
+  linkWeek,
+  overlayFromBackup,
+  parseIngredientText,
   parseRecipes,
+  recipesToCsv,
+  relinkWeek,
   resolveAppBase,
+  tagBaseRecipes,
 } from "../js/planner.js";
 
 const csv = readFileSync(new URL("../recipes.csv", import.meta.url), "utf8");
@@ -170,4 +178,98 @@ test("app base keeps the GitHub Pages project path", () => {
     "https://lucinda94.github.io/Meal-planner/",
   );
   assert.equal(resolveAppBase("http://127.0.0.1:8765/"), "http://127.0.0.1:8765/");
+});
+
+test("phone edits layer on top of the sheet and keep a stable id", () => {
+  const base = tagBaseRecipes(recipes);
+  const spanish = base.find((recipe) => recipe.name === "Spanish chicken");
+  const overlay = {
+    added: [{
+      id: "local:test-supper",
+      name: "Tomato rice",
+      whose: "Lucinda",
+      ingredients: ["rice", "dragon fruit"],
+      optional: ["feta"],
+      notes: "A new one.",
+    }],
+    edited: {
+      [spanish.id]: {
+        id: spanish.id,
+        name: "Gez's Spanish chicken",
+        whose: "Gez",
+        ingredients: spanish.ingredients,
+        optional: ["olives"],
+        notes: spanish.notes,
+      },
+    },
+    deleted: ["csv:Fajitas"],
+  };
+  const merged = applyRecipeOverlay(base, overlay);
+  assert.equal(merged[0].name, "Tomato rice");
+  assert.equal(merged.find((recipe) => recipe.name === "Fajitas"), undefined);
+  const edited = merged.find((recipe) => recipe.id === spanish.id);
+  assert.equal(edited.name, "Gez's Spanish chicken");
+  assert.deepEqual(edited.optional, ["olives"]);
+  assert.equal(base.find((recipe) => recipe.name === "Spanish chicken").name, "Spanish chicken");
+
+  const week = linkWeek({ ...emptyWeek(), fri: "local:test-supper", mon: "Spanish chicken" }, merged);
+  assert.equal(week.fri, "local:test-supper");
+  assert.equal(week.mon, spanish.id);
+  const cleared = clearPlannedRecipe(week, spanish.id);
+  assert.equal(cleared.mon, "");
+  assert.equal(cleared.fri, "local:test-supper");
+
+  const list = buildShoppingList(merged, week, { includeOptional: false, includeSpices: false });
+  const fruit = findItem(list, "dragon fruit");
+  assert.equal(fruit.aisle, "other");
+  assert.equal(formatMealGroup(fruit.meals[0]), "Fri · Tomato rice");
+  const renamed = findItem(list, "chicken");
+  assert.ok(renamed.meals.some((group) => group.name === "Gez's Spanish chicken"));
+});
+
+test("ingredient box accepts lines or commas, and a backup CSV round-trips", () => {
+  assert.deepEqual(parseIngredientText(" chicken, chorizo \n pesto "), ["chicken", "chorizo", "pesto"]);
+  const base = tagBaseRecipes(recipes);
+  const csvText = recipesToCsv(base);
+  const again = parseRecipes(csvText);
+  assert.equal(again.length, base.length);
+  assert.deepEqual(again.map((recipe) => recipe.name), base.map((recipe) => recipe.name));
+  const bake = again.find((recipe) => recipe.name === "Chicken, bacon and leek bake");
+  assert.equal(bake.whose, "Jessica");
+  const bourbon = again.find((recipe) => recipe.name === "Bourbon chicken");
+  assert.ok(bourbon.notes.includes(","));
+
+  const backup = parseRecipes(csvText);
+  const spanish = backup.find((recipe) => recipe.name === "Spanish chicken");
+  spanish.notes = "Extra paprika.";
+  backup.push({
+    name: "Tomato rice",
+    whose: "",
+    ingredients: ["rice"],
+    optional: [],
+    notes: "",
+  });
+  backup.splice(backup.findIndex((recipe) => recipe.name === "Fajitas"), 1);
+  const overlay = overlayFromBackup(base, backup);
+  assert.deepEqual(overlay.deleted, ["csv:Fajitas"]);
+  assert.equal(overlay.edited[base.find((recipe) => recipe.name === "Spanish chicken").id].notes, "Extra paprika.");
+  assert.equal(overlay.added.length, 1);
+  assert.equal(overlay.added[0].name, "Tomato rice");
+
+  const previous = applyRecipeOverlay(base, {
+    edited: {
+      [base.find((recipe) => recipe.name === "Spanish chicken").id]: {
+        id: base.find((recipe) => recipe.name === "Spanish chicken").id,
+        name: "Spanish chicken",
+        whose: "Gez",
+        ingredients: ["chicken"],
+        optional: [],
+        notes: "",
+      },
+    },
+  });
+  const next = applyRecipeOverlay(base, overlay);
+  const week = { ...emptyWeek(), wed: previous.find((recipe) => recipe.name === "Spanish chicken").id };
+  const relinked = relinkWeek(week, previous, next);
+  assert.equal(relinked.wed, week.wed);
 });

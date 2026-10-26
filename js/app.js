@@ -1,26 +1,37 @@
 import {
   DAYS,
   MISSING_INGREDIENTS,
+  applyRecipeOverlay,
   buildShoppingList,
+  clearPlannedRecipe,
   coerceWeek,
+  createRecipeId,
   defaultWeek,
+  emptyOverlay,
   emptyWeek,
   filterRecipes,
   formatMealGroup,
+  linkWeek,
+  normaliseOverlay,
+  overlayFromBackup,
+  parseIngredientText,
   parseRecipes,
+  recipesToCsv,
+  relinkWeek,
   resolveAppBase,
+  tagBaseRecipes,
 } from "./planner.js";
 
 const STORAGE_KEY = "meal-planner.v1";
-const TAB_KEY = "meal-planner.tab";
 const WEEK_FIELDS = ["name", "whose", "ingredients"];
 const RECIPE_FIELDS = ["name", "whose", "ingredients", "optional", "notes"];
 
 let swallowNextClick = false;
 
 const state = {
+  baseRecipes: [],
+  overlay: emptyOverlay(),
   recipes: [],
-  byName: new Map(),
   week: defaultWeek(),
   includeOptional: false,
   includeSpices: false,
@@ -30,6 +41,9 @@ const state = {
   activeIndex: 0,
   expanded: new Set(),
   recipeQuery: "",
+  editingId: null,
+  pendingBackup: null,
+  formReturn: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -51,6 +65,7 @@ function saveState() {
     includeOptional: state.includeOptional,
     includeSpices: state.includeSpices,
     ticked: state.ticked,
+    recipes: state.overlay,
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -63,12 +78,21 @@ function svgChevron() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" class="chevron"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
+function findRecipe(value) {
+  if (!value) return null;
+  return state.recipes.find((recipe) => recipe.id === value)
+    || state.recipes.find((recipe) => recipe.name === value)
+    || null;
+}
+
 function boot(recipes) {
-  state.recipes = recipes;
-  state.byName = new Map(recipes.map((recipe) => [recipe.name, recipe]));
+  state.baseRecipes = tagBaseRecipes(recipes);
   const saved = loadState();
+  state.overlay = normaliseOverlay(saved?.recipes);
+  state.recipes = applyRecipeOverlay(state.baseRecipes, state.overlay);
+  const storedWeek = saved ? (coerceWeek(saved.week) || emptyWeek()) : defaultWeek();
+  state.week = linkWeek(storedWeek, state.recipes);
   if (saved) {
-    state.week = coerceWeek(saved.week) || emptyWeek();
     state.includeOptional = saved.includeOptional === true;
     state.includeSpices = saved.includeSpices === true;
     state.ticked = {};
@@ -78,19 +102,29 @@ function boot(recipes) {
       }
     }
   }
-  try {
-    const tab = sessionStorage.getItem(TAB_KEY);
-    if (tab === "week" || tab === "recipes" || tab === "shop") state.tab = tab;
-  } catch {
-    // Ignore.
+  if (location.hash === "#recipes" || location.hash === "#shop" || location.hash === "#week") {
+    const url = new URL(location.href);
+    url.hash = "";
+    history.replaceState(null, "", `${url.pathname}${url.search}`);
   }
 
   renderDays();
   bindChrome();
   renderRecipes();
   renderShopping();
-  setTab(state.tab);
+  setTab("week");
   registerServiceWorker();
+}
+
+function refreshFromOverlay() {
+  const previous = state.recipes;
+  state.recipes = applyRecipeOverlay(state.baseRecipes, state.overlay);
+  state.week = relinkWeek(state.week, previous, state.recipes);
+  saveState();
+  if (state.openDay) closeCombo();
+  for (const day of DAYS) paintDay(day.id);
+  renderRecipes();
+  renderShopping();
 }
 
 function renderDays() {
@@ -239,7 +273,7 @@ function renderDays() {
       window.setTimeout(() => {
         swallowNextClick = false;
       }, 400);
-      chooseRecipe(day.id, option.dataset.name);
+      chooseRecipe(day.id, option.dataset.id);
     });
   }
   for (const day of DAYS) paintDay(day.id);
@@ -264,9 +298,9 @@ function dayEls(dayId) {
 function paintDay(dayId) {
   const els = dayEls(dayId);
   const selected = state.week[dayId];
-  const recipe = selected ? state.byName.get(selected) : null;
-  els.value.textContent = selected || "Choose a recipe";
-  els.value.classList.toggle("is-placeholder", !selected);
+  const recipe = findRecipe(selected);
+  els.value.textContent = recipe ? recipe.name : "Choose a recipe";
+  els.value.classList.toggle("is-placeholder", !recipe);
   els.clear.hidden = !selected;
   els.whose.textContent = recipe && recipe.whose ? recipe.whose : "";
   if (selected && !recipe) {
@@ -283,7 +317,7 @@ function paintDay(dayId) {
 function openCombo(dayId) {
   if (state.openDay && state.openDay !== dayId) closeCombo();
   state.openDay = dayId;
-  const selectedIndex = state.recipes.findIndex((recipe) => recipe.name === state.week[dayId]);
+  const selectedIndex = state.recipes.findIndex((recipe) => recipe.id === state.week[dayId] || recipe.name === state.week[dayId]);
   state.activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
   const els = dayEls(dayId);
   els.combo.classList.add("is-open");
@@ -353,7 +387,7 @@ function renderOptions(dayId) {
     const option = document.createElement("li");
     option.id = `opt-${dayId}-${index}`;
     option.setAttribute("role", "option");
-    option.dataset.name = recipe.name;
+    option.dataset.id = recipe.id;
     option.setAttribute("aria-selected", index === state.activeIndex ? "true" : "false");
     if (index === state.activeIndex) option.classList.add("is-active");
     const title = document.createElement("span");
@@ -363,7 +397,7 @@ function renderOptions(dayId) {
     meta.className = "opt-meta";
     meta.textContent = optionMeta(recipe);
     option.append(title, meta);
-    if (recipe.name === selected) {
+    if (recipe.id === selected || recipe.name === selected) {
       option.classList.add("is-current");
       const flag = document.createElement("span");
       flag.className = "sr-only";
@@ -416,7 +450,7 @@ function onComboKeydown(event, dayId) {
   } else if (event.key === "Enter") {
     event.preventDefault();
     const recipe = matches[state.activeIndex];
-    if (recipe) chooseRecipe(dayId, recipe.name);
+    if (recipe) chooseRecipe(dayId, recipe.id);
   } else if (event.key === "Escape") {
     event.preventDefault();
     const display = dayEls(dayId).display;
@@ -425,8 +459,8 @@ function onComboKeydown(event, dayId) {
   }
 }
 
-function chooseRecipe(dayId, name) {
-  state.week[dayId] = name;
+function chooseRecipe(dayId, id) {
+  state.week[dayId] = id;
   saveState();
   const display = dayEls(dayId).display;
   closeCombo();
@@ -491,6 +525,38 @@ function bindChrome() {
     saveState();
     renderShopping();
   });
+  $("#add-recipe").addEventListener("click", () => openRecipeForm(null, $("#add-recipe")));
+  $("#recipe-form").addEventListener("submit", saveRecipeForm);
+  $("#recipe-cancel").addEventListener("click", closeRecipeForm);
+  $("#recipe-delete").addEventListener("click", () => {
+    const recipe = state.recipes.find((item) => item.id === state.editingId);
+    $("#delete-copy").textContent = recipe
+      ? `“${recipe.name}” will be removed from this phone. It is also taken off any day in the week.`
+      : "This recipe will be removed from this phone.";
+    $("#delete-dialog").showModal();
+  });
+  $("#cancel-delete").addEventListener("click", () => $("#delete-dialog").close());
+  $("#confirm-delete").addEventListener("click", confirmDeleteRecipe);
+  $("#backup-recipes").addEventListener("click", downloadBackup);
+  $("#restore-recipes").addEventListener("click", () => $("#restore-file").click());
+  $("#restore-file").addEventListener("change", chooseBackupFile);
+  $("#cancel-restore").addEventListener("click", () => {
+    state.pendingBackup = null;
+    $("#confirm-restore").hidden = false;
+    $("#restore-dialog").close();
+  });
+  $("#confirm-restore").addEventListener("click", confirmRestore);
+  $("#recipe-dialog").addEventListener("close", () => {
+    if (state.formReturn) {
+      state.formReturn.focus();
+      state.formReturn = null;
+    }
+  });
+  document.querySelectorAll(".field input, .field textarea").forEach((field) => {
+    field.addEventListener("focus", () => {
+      window.setTimeout(() => field.scrollIntoView({ block: "center", behavior: "auto" }), 150);
+    });
+  });
 
   document.addEventListener(
     "click",
@@ -542,21 +608,16 @@ function onTabKeydown(event, button) {
 
 function setTab(tab) {
   if (state.openDay) closeCombo();
-  state.tab = tab;
-  try {
-    sessionStorage.setItem(TAB_KEY, tab);
-  } catch {
-    // Ignore.
-  }
+  state.tab = tab === "recipes" || tab === "shop" ? tab : "week";
   document.querySelectorAll("[data-tab]").forEach((button) => {
-    const selected = button.dataset.tab === tab;
+    const selected = button.dataset.tab === state.tab;
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.tabIndex = selected ? 0 : -1;
   });
   document.querySelectorAll("[data-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.panel !== tab;
+    panel.hidden = panel.dataset.panel !== state.tab;
   });
-  if (tab === "shop") renderShopping();
+  if (state.tab === "shop") renderShopping();
   window.scrollTo(0, 0);
 }
 
@@ -578,9 +639,12 @@ function renderRecipes() {
   for (const recipe of matches) {
     const card = document.createElement("article");
     card.className = "recipe";
-    const open = state.expanded.has(recipe.name);
+    card.dataset.id = recipe.id;
+    const open = state.expanded.has(recipe.id);
     if (open) card.classList.add("is-open");
 
+    const top = document.createElement("div");
+    top.className = "recipe-top";
     const head = document.createElement("button");
     head.type = "button";
     head.className = "recipe-head";
@@ -607,6 +671,13 @@ function renderRecipes() {
     chevron.className = "combo-chevron";
     chevron.innerHTML = svgChevron();
     head.append(titles, chevron);
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "recipe-edit";
+    edit.textContent = "Edit";
+    edit.setAttribute("aria-label", `Edit ${recipe.name}`);
+    edit.addEventListener("click", () => openRecipeForm(recipe, edit));
+    top.append(head, edit);
 
     const body = document.createElement("div");
     body.className = "recipe-body";
@@ -633,15 +704,14 @@ function renderRecipes() {
     }
 
     head.addEventListener("click", () => {
-      if (state.expanded.has(recipe.name)) state.expanded.delete(recipe.name);
-      else state.expanded.add(recipe.name);
+      if (state.expanded.has(recipe.id)) state.expanded.delete(recipe.id);
+      else state.expanded.add(recipe.id);
       renderRecipes();
-      const buttons = [...list.querySelectorAll(".recipe-head")];
-      const match = buttons.find((button) => button.querySelector(".recipe-name")?.textContent === recipe.name);
+      const match = list.querySelector(`[data-id="${CSS.escape(recipe.id)}"] .recipe-head`);
       if (match) match.focus();
     });
 
-    card.append(head, body);
+    card.append(top, body);
     list.append(card);
   }
 }
@@ -776,6 +846,133 @@ function renderShopping() {
     again?.focus({ preventScroll: true });
   }
   window.scrollTo(0, scrollY);
+}
+
+function openRecipeForm(recipe, returnFocus) {
+  state.editingId = recipe ? recipe.id : null;
+  state.formReturn = returnFocus || null;
+  $("#recipe-form-title").textContent = recipe ? "Edit recipe" : "Add recipe";
+  $("#recipe-name").value = recipe ? recipe.name : "";
+  $("#recipe-whose").value = recipe ? recipe.whose : "";
+  $("#recipe-ingredients").value = recipe ? recipe.ingredients.join("\n") : "";
+  $("#recipe-optional").value = recipe ? recipe.optional.join("\n") : "";
+  $("#recipe-notes").value = recipe ? recipe.notes : "";
+  const error = $("#recipe-form-error");
+  error.hidden = true;
+  error.textContent = "";
+  $("#recipe-delete").hidden = !recipe;
+  const dialog = $("#recipe-dialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  $("#recipe-name").focus();
+}
+
+function closeRecipeForm() {
+  const dialog = $("#recipe-dialog");
+  if (dialog.open) dialog.close();
+}
+
+function saveRecipeForm(event) {
+  event.preventDefault();
+  const name = $("#recipe-name").value.trim();
+  const error = $("#recipe-form-error");
+  if (!name) {
+    error.textContent = "Add a recipe name.";
+    error.hidden = false;
+    $("#recipe-name").focus();
+    return;
+  }
+  const fields = {
+    name,
+    whose: $("#recipe-whose").value.trim(),
+    ingredients: parseIngredientText($("#recipe-ingredients").value),
+    optional: parseIngredientText($("#recipe-optional").value),
+    notes: $("#recipe-notes").value.trim(),
+  };
+  if (state.editingId) {
+    const onSheet = state.editingId.startsWith("csv:") || state.baseRecipes.some((recipe) => recipe.id === state.editingId);
+    if (onSheet) {
+      state.overlay.edited[state.editingId] = { id: state.editingId, ...fields };
+    } else {
+      const index = state.overlay.added.findIndex((recipe) => recipe.id === state.editingId);
+      if (index >= 0) state.overlay.added[index] = { id: state.editingId, ...fields };
+      else state.overlay.added.unshift({ id: state.editingId, ...fields });
+    }
+  } else {
+    state.overlay.added.unshift({ id: createRecipeId(), ...fields });
+  }
+  closeRecipeForm();
+  refreshFromOverlay();
+}
+
+function confirmDeleteRecipe() {
+  const id = state.editingId;
+  $("#delete-dialog").close();
+  if (!id) return;
+  if (id.startsWith("csv:") || state.baseRecipes.some((recipe) => recipe.id === id)) {
+    if (!state.overlay.deleted.includes(id)) state.overlay.deleted.push(id);
+    delete state.overlay.edited[id];
+  } else {
+    state.overlay.added = state.overlay.added.filter((recipe) => recipe.id !== id);
+    delete state.overlay.edited[id];
+  }
+  state.week = clearPlannedRecipe(state.week, id);
+  state.expanded.delete(id);
+  state.editingId = null;
+  closeRecipeForm();
+  refreshFromOverlay();
+}
+
+function downloadBackup() {
+  const csv = recipesToCsv(state.recipes);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "my-recipes.csv";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function chooseBackupFile(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const backup = parseRecipes(String(reader.result || ""));
+      if (backup.length === 0) throw new Error("empty");
+      state.pendingBackup = backup;
+      $("#confirm-restore").hidden = false;
+      $("#restore-copy").textContent = `This replaces recipes you've added or edited on this phone with the ${backup.length} dinners in the file. A day in the week stays filled when that dinner is still there.`;
+      $("#restore-dialog").showModal();
+    } catch {
+      state.pendingBackup = null;
+      $("#restore-copy").textContent = "That file doesn't look like a recipes backup. It needs the same column headings as the sheet: Recipe, Whose recipe, Ingredients, Optional extras, Notes.";
+      $("#confirm-restore").hidden = true;
+      $("#restore-dialog").showModal();
+    }
+  };
+  reader.readAsText(file);
+}
+
+function confirmRestore() {
+  const backup = state.pendingBackup;
+  state.pendingBackup = null;
+  $("#confirm-restore").hidden = false;
+  $("#restore-dialog").close();
+  if (!backup) return;
+  const previous = state.recipes;
+  state.overlay = normaliseOverlay(overlayFromBackup(state.baseRecipes, backup));
+  state.recipes = applyRecipeOverlay(state.baseRecipes, state.overlay);
+  state.week = relinkWeek(state.week, previous, state.recipes);
+  saveState();
+  if (state.openDay) closeCombo();
+  for (const day of DAYS) paintDay(day.id);
+  renderRecipes();
+  renderShopping();
 }
 
 function registerServiceWorker() {

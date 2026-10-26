@@ -351,6 +351,238 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+/** Ingredients typed in the form: one per line, or separated by commas. */
+export function parseIngredientText(value) {
+  return String(value)
+    .split(/[\n,]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function createRecipeId() {
+  const random = globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `local:${random}`;
+}
+
+/** Stable id for a dinner that came from recipes.csv. It stays put when the file is updated, as long as the recipe name in the sheet does not change. */
+export function tagBaseRecipes(recipes) {
+  const seen = new Map();
+  return recipes.map((recipe) => {
+    const count = (seen.get(recipe.name) || 0) + 1;
+    seen.set(recipe.name, count);
+    const id = count === 1 ? `csv:${recipe.name}` : `csv:${recipe.name}#${count}`;
+    return { ...recipe, id };
+  });
+}
+
+export function emptyOverlay() {
+  return { added: [], edited: {}, deleted: [] };
+}
+
+function cleanRecipeFields(recipe, id) {
+  if (!recipe || typeof recipe !== "object") return null;
+  const name = String(recipe.name || "").trim();
+  if (!name) return null;
+  const ingredients = Array.isArray(recipe.ingredients)
+    ? recipe.ingredients.map((item) => String(item).trim()).filter(Boolean)
+    : parseIngredientText(recipe.ingredients || "");
+  const optional = Array.isArray(recipe.optional)
+    ? recipe.optional.map((item) => String(item).trim()).filter(Boolean)
+    : parseIngredientText(recipe.optional || "");
+  return {
+    id,
+    name,
+    whose: String(recipe.whose || "").trim(),
+    ingredients,
+    optional,
+    notes: String(recipe.notes || "").trim(),
+  };
+}
+
+export function normaliseOverlay(value) {
+  const overlay = emptyOverlay();
+  if (!value || typeof value !== "object") return overlay;
+  if (Array.isArray(value.added)) {
+    for (const recipe of value.added) {
+      const id = recipe && typeof recipe.id === "string" ? recipe.id : "";
+      if (!id || id.startsWith("csv:")) continue;
+      const clean = cleanRecipeFields(recipe, id);
+      if (clean) overlay.added.push(clean);
+    }
+  }
+  if (value.edited && typeof value.edited === "object") {
+    for (const [id, recipe] of Object.entries(value.edited)) {
+      if (!id) continue;
+      const clean = cleanRecipeFields(recipe, id);
+      if (clean) overlay.edited[id] = clean;
+    }
+  }
+  if (Array.isArray(value.deleted)) {
+    overlay.deleted = [...new Set(value.deleted.filter((id) => typeof id === "string" && id))];
+  }
+  return overlay;
+}
+
+/**
+ * Phone edits sit on top of recipes.csv.
+ * Added recipes come first, then the sheet, with edits applied and deletions removed.
+ * An edit whose sheet row has disappeared is kept, so a file update does not throw away her work.
+ */
+export function applyRecipeOverlay(baseRecipes, overlay) {
+  const clean = normaliseOverlay(overlay);
+  const deleted = new Set(clean.deleted);
+  const result = [];
+  const seen = new Set();
+  for (const recipe of clean.added) {
+    if (deleted.has(recipe.id) || seen.has(recipe.id)) continue;
+    seen.add(recipe.id);
+    result.push({ ...recipe });
+  }
+  for (const recipe of baseRecipes) {
+    if (!recipe.id || deleted.has(recipe.id) || seen.has(recipe.id)) continue;
+    seen.add(recipe.id);
+    const edit = clean.edited[recipe.id];
+    result.push(edit ? { ...edit, id: recipe.id } : { ...recipe });
+  }
+  for (const [id, edit] of Object.entries(clean.edited)) {
+    if (seen.has(id) || deleted.has(id)) continue;
+    seen.add(id);
+    result.push({ ...edit, id });
+  }
+  return result;
+}
+
+function listsEqual(left, right) {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item === right[index]);
+}
+
+function sameContent(left, right) {
+  return left.name === right.name
+    && left.whose === right.whose
+    && left.notes === right.notes
+    && listsEqual(left.ingredients, right.ingredients)
+    && listsEqual(left.optional, right.optional);
+}
+
+/**
+ * Turn a full backup into an overlay against the current sheet.
+ * Rows are matched by recipe name. Renamed dinners become new recipes, and sheet dinners missing from the file are marked deleted.
+ */
+export function overlayFromBackup(baseRecipes, backupRecipes) {
+  const remaining = new Map();
+  for (const recipe of baseRecipes) {
+    const list = remaining.get(recipe.name) || [];
+    list.push(recipe);
+    remaining.set(recipe.name, list);
+  }
+  const added = [];
+  const edited = {};
+  const used = new Set();
+  for (const row of backupRecipes) {
+    const pool = (remaining.get(row.name) || []).filter((recipe) => !used.has(recipe.id));
+    if (pool.length === 0) {
+      added.push({
+        id: createRecipeId(),
+        name: row.name,
+        whose: row.whose,
+        ingredients: row.ingredients.slice(),
+        optional: row.optional.slice(),
+        notes: row.notes,
+      });
+      continue;
+    }
+    const base = pool[0];
+    used.add(base.id);
+    if (!sameContent(base, row)) {
+      edited[base.id] = {
+        id: base.id,
+        name: row.name,
+        whose: row.whose,
+        ingredients: row.ingredients.slice(),
+        optional: row.optional.slice(),
+        notes: row.notes,
+      };
+    }
+  }
+  const deleted = baseRecipes.filter((recipe) => !used.has(recipe.id)).map((recipe) => recipe.id);
+  return { added, edited, deleted };
+}
+
+export function linkWeek(week, recipes) {
+  const out = emptyWeek();
+  const source = week && typeof week === "object" ? week : {};
+  for (const day of DAYS) {
+    const value = String(source[day.id] || "").trim();
+    if (!value) continue;
+    const byId = recipes.find((recipe) => recipe.id === value);
+    if (byId) {
+      out[day.id] = byId.id;
+      continue;
+    }
+    const named = recipes.filter((recipe) => recipe.name === value);
+    if (named.length === 1) {
+      out[day.id] = named[0].id;
+      continue;
+    }
+    if (named.length > 1) continue;
+    const sheetId = `csv:${value}`;
+    const fromSheet = recipes.filter((recipe) => recipe.id === sheetId || (recipe.id || "").startsWith(`${sheetId}#`));
+    if (fromSheet.length === 1) out[day.id] = fromSheet[0].id;
+  }
+  return out;
+}
+
+/** Keep a planned dinner when its id changed but the name is still in the list (for example after restoring a backup). */
+export function relinkWeek(week, previousRecipes, nextRecipes) {
+  const linked = linkWeek(week, nextRecipes);
+  const previousById = new Map(previousRecipes.map((recipe) => [recipe.id, recipe]));
+  for (const day of DAYS) {
+    if (linked[day.id]) continue;
+    const previous = previousById.get(week?.[day.id]);
+    if (!previous) continue;
+    const matches = nextRecipes.filter((recipe) => recipe.name === previous.name);
+    if (matches.length === 1) linked[day.id] = matches[0].id;
+  }
+  return linked;
+}
+
+export function clearPlannedRecipe(week, id) {
+  const next = { ...emptyWeek(), ...(week || {}) };
+  for (const day of DAYS) {
+    if (next[day.id] === id) next[day.id] = "";
+  }
+  return next;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+/** Full recipe list in the same columns as recipes.csv. */
+export function recipesToCsv(recipes) {
+  const lines = [["Recipe", "Whose recipe", "Ingredients", "Optional extras", "Notes"].join(",")];
+  for (const recipe of recipes) {
+    lines.push([
+      recipe.name,
+      recipe.whose || "",
+      (recipe.ingredients || []).join(", "),
+      (recipe.optional || []).join(", "),
+      recipe.notes || "",
+    ].map(csvEscape).join(","));
+  }
+  return `\uFEFF${lines.join("\n")}\n`;
+}
+
+function lookupRecipe(recipes, token) {
+  const byId = recipes.find((recipe) => recipe.id && recipe.id === token);
+  if (byId) return byId;
+  return recipes.find((recipe) => recipe.name === token) || null;
+}
+
 export function parseRecipes(csvText) {
   const rows = parseCSV(csvText);
   if (rows.length === 0) return [];
@@ -433,19 +665,18 @@ function mealGroups(meals) {
 export function buildShoppingList(recipes, week, options = {}) {
   const includeOptional = options.includeOptional === true;
   const includeSpices = options.includeSpices === true;
-  const byName = new Map(recipes.map((recipe) => [recipe.name, recipe]));
   const items = new Map();
   const notices = [];
 
   for (const day of DAYS) {
-    const name = (week && week[day.id] ? week[day.id] : "").trim();
-    if (!name) continue;
-    const recipe = byName.get(name);
+    const token = (week && week[day.id] ? week[day.id] : "").trim();
+    if (!token) continue;
+    const recipe = lookupRecipe(recipes, token);
     if (!recipe) {
       notices.push({
         dayId: day.id,
         dayLabel: day.label,
-        recipe: name,
+        recipe: token,
         message: "This recipe isn't in the list any more.",
       });
       continue;
@@ -454,7 +685,7 @@ export function buildShoppingList(recipes, week, options = {}) {
       notices.push({
         dayId: day.id,
         dayLabel: day.label,
-        recipe: name,
+        recipe: recipe.name,
         message: MISSING_INGREDIENTS,
       });
     }
@@ -477,7 +708,7 @@ export function buildShoppingList(recipes, week, options = {}) {
           meals: [],
         });
       }
-      items.get(key).meals.push({ name, day: day.short });
+      items.get(key).meals.push({ name: recipe.name, day: day.short });
     }
   }
 

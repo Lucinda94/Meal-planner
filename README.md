@@ -27,9 +27,19 @@ The first publish can take a minute. After that, the site updates whenever `main
 
 It opens full screen, like an app, and still works offline after it has been opened once while online.
 
-## Update the recipes
+The app always opens on the week plan.
 
-All the dinners live in [`recipes.csv`](recipes.csv), exported from the Google Sheet “My recipes”. To change them:
+## Change recipes on your phone
+
+On the **Recipes** tab, **Add recipe** and **Edit** use the same details as the sheet: name, whose recipe, ingredients, optional extras, and notes. Ingredients can be one per line, or separated by commas. **Delete recipe** asks before it removes a dinner, and takes it off the week plan too.
+
+Those changes are saved on this phone, on top of `recipes.csv`. They stay put when you reload, and when the spreadsheet file is updated. A new ingredient is grouped on the shopping list when the app knows the aisle, and otherwise it goes under **Other**.
+
+**Back up my recipes** downloads every dinner (the sheet plus your edits) as a CSV with the same columns. **Restore from backup** reads that file back onto this phone. Worth doing, because edits made in the app live only on that phone.
+
+## Update the recipes from the spreadsheet
+
+The starting dinners live in [`recipes.csv`](recipes.csv), exported from the Google Sheet “My recipes”. To change them for every phone:
 
 1. In Google Sheets, use **File → Download → Comma-separated values (.csv)**.
 2. On GitHub, open this repository and choose **Add file → Upload files**.

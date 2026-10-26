@@ -49,6 +49,13 @@
 
         <section id="panel-recipes" data-panel="recipes" role="tabpanel" aria-labelledby="tab-recipes" hidden>
           <h2 class="sr-only">Recipes</h2>
+          <div class="recipe-tools">
+            <button type="button" class="btn primary" id="add-recipe">Add recipe</button>
+            <button type="button" class="btn ghost" id="backup-recipes">Back up my recipes</button>
+            <button type="button" class="btn ghost" id="restore-recipes">Restore from backup</button>
+            <input id="restore-file" type="file" accept=".csv,text/csv" hidden />
+          </div>
+          <p class="footnote recipe-footnote">Changes are saved on this phone. Back up if you want a copy.</p>
           <label class="search" for="recipe-search">
             <span class="sr-only">Search recipes</span>
             <input
@@ -104,6 +111,60 @@
         </div>
       </nav>
     </div>
+
+    <dialog id="recipe-dialog" class="recipe-dialog" aria-labelledby="recipe-form-title">
+      <form id="recipe-form">
+        <div class="form-scroll">
+          <h2 id="recipe-form-title">Add recipe</h2>
+          <p id="recipe-form-error" class="form-error" role="alert" hidden></p>
+          <label class="field" for="recipe-name">
+            Recipe name (required)
+            <input id="recipe-name" name="recipe-name" type="text" required aria-required="true" autocomplete="off" autocapitalize="sentences" enterkeyhint="next" />
+          </label>
+          <label class="field" for="recipe-whose">
+            Whose recipe
+            <input id="recipe-whose" name="recipe-whose" type="text" autocomplete="off" autocapitalize="words" enterkeyhint="next" />
+          </label>
+          <label class="field" for="recipe-ingredients">
+            Ingredients
+            <textarea id="recipe-ingredients" name="recipe-ingredients" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One ingredient per line, or separated by commas"></textarea>
+          </label>
+          <label class="field" for="recipe-optional">
+            Optional extras
+            <textarea id="recipe-optional" name="recipe-optional" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One per line, or separated by commas"></textarea>
+          </label>
+          <label class="field" for="recipe-notes">
+            Notes
+            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off"></textarea>
+          </label>
+        </div>
+        <div class="form-actions">
+          <div class="dialog-actions">
+            <button type="button" class="btn ghost" id="recipe-cancel">Cancel</button>
+            <button type="submit" class="btn primary">Save recipe</button>
+          </div>
+          <button type="button" class="btn danger" id="recipe-delete" hidden>Delete recipe</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="delete-dialog" aria-labelledby="delete-title">
+      <h2 id="delete-title">Delete this recipe?</h2>
+      <p id="delete-copy"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="cancel-delete">Keep it</button>
+        <button type="button" class="btn danger" id="confirm-delete">Delete recipe</button>
+      </div>
+    </dialog>
+
+    <dialog id="restore-dialog" aria-labelledby="restore-title">
+      <h2 id="restore-title">Restore from backup?</h2>
+      <p id="restore-copy"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="cancel-restore">Cancel</button>
+        <button type="button" class="btn primary" id="confirm-restore">Restore recipes</button>
+      </div>
+    </dialog>
 
     <dialog id="clear-dialog" aria-labelledby="clear-title">
       <h2 id="clear-title">Clear the week?</h2>
