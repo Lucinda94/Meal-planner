@@ -44,7 +44,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -58,12 +59,15 @@ button {
   touch-action: manipulation;
 }
 
-input {
+input,
+textarea {
   touch-action: manipulation;
+  font-size: 17px;
 }
 
 button:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 .combo-display:focus-visible,
 .recipe-head:focus-visible {
   outline: 3px solid var(--accent);
@@ -464,14 +468,46 @@ main {
   box-shadow: var(--shadow);
 }
 
+.recipe-tools {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-footnote {
+  margin-top: 8px;
+  text-align: left;
+}
+
+.recipe-top {
+  display: flex;
+  align-items: stretch;
+}
+
 .recipe-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 64px;
   padding: 12px 14px;
   text-align: left;
+}
+
+.recipe-edit {
+  flex: none;
+  align-self: stretch;
+  min-width: 64px;
+  min-height: 48px;
+  padding: 8px 14px;
+  border-left: 1px solid #f0e4d8;
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.recipe-edit:active {
+  background: var(--accent-soft);
 }
 
 .recipe-head > span:first-child {
@@ -752,12 +788,96 @@ main {
 
 dialog {
   width: min(420px, calc(100% - 32px));
-  padding: 22px 20px 18px;
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+  overflow: auto;
+  padding: 22px 20px calc(18px + env(safe-area-inset-bottom));
   background: var(--surface);
   color: var(--ink);
   border: 0;
   border-radius: 20px;
   box-shadow: 0 20px 60px rgba(60, 30, 10, 0.28);
+}
+
+.recipe-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 16px));
+  height: min(760px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.recipe-dialog form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.form-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 18px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.form-actions {
+  flex: none;
+  padding: 10px 18px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.form-actions .btn.danger {
+  margin-top: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1.5px solid #e4d3c4;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(168, 67, 36, 0.16);
+}
+
+.form-error {
+  margin: 0 0 12px;
+  color: #8c3118;
+  font-weight: 600;
+}
+
+.btn.danger {
+  margin-top: 8px;
+  background: transparent;
+  color: #8c3118;
+  border: 1.5px solid #e7b2a4;
 }
 
 dialog::backdrop {

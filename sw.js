@@ -1,5 +1,5 @@
 /* Offline cache for the meal planner. Network first, so a new recipes.csv shows up when she is online. */
-const CACHE = "meal-planner-v1";
+const CACHE = "meal-planner-v2";
 const BASE = new URL("./", self.location);
 const FILES = [
   "index.html",
