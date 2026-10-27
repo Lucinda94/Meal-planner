@@ -1,0 +1,936 @@
+import { APP_NAME } from "./config.js";
+import { WEEKDAYS, formatDate, formatWhen, isSameDay, normaliseWeekday, weekdayLabel } from "./dates.js";
+import {
+  countByState,
+  formatFrequency,
+  frequencyFromPreset,
+  latestCompletion,
+  presetForFrequency,
+  tasksWithStatus,
+} from "./dueness.js";
+import { createDemoRepository, firstName, shortAddress } from "./store.js";
+
+const PRESETS = [
+  ["visit", "Every visit"],
+  ["1-weeks", "Every week"],
+  ["2-weeks", "Every 2 weeks"],
+  ["1-months", "Every month"],
+  ["3-months", "Every 3 months"],
+  ["custom", "Custom"],
+];
+
+const repo = createDemoRepository();
+const ui = {
+  sheet: null,
+  confirmReset: false,
+  toast: null,
+  linkError: "",
+  link: emptyLink(),
+  notes: {},
+  scrollToId: "",
+};
+let toastTimer = 0;
+
+function emptyLink() {
+  return {
+    customerName: "",
+    homeName: "",
+    address: "",
+    visitWeekday: "monday",
+    inviteCode: "",
+  };
+}
+
+function esc(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function today() {
+  return new Date();
+}
+
+function accountName(state, id) {
+  return state.accounts.find((account) => account.id === id)?.name || "Home";
+}
+
+function customerOf(state, home) {
+  return state.accounts.find((account) => account.id === home.customerId) || null;
+}
+
+function cleanerOf(state, home) {
+  return state.accounts.find((account) => account.id === home.cleanerId) || null;
+}
+
+function orderedAccounts(state) {
+  const cleaners = state.accounts.filter((account) => account.role === "cleaner");
+  const customers = state.accounts.filter((account) => account.role === "customer");
+  const ordered = [];
+  for (const home of state.homes) {
+    const customer = customers.find((account) => account.id === home.customerId);
+    if (customer && !ordered.includes(customer)) ordered.push(customer);
+  }
+  for (const customer of customers) {
+    if (!ordered.includes(customer)) ordered.push(customer);
+  }
+  return [...cleaners, ...ordered];
+}
+
+function optionLabel(state, account) {
+  if (account.role === "cleaner") return `${account.name} · cleaner`;
+  const home = state.homes.find((item) => item.customerId === account.id);
+  return `${account.name} · ${home ? shortAddress(home.address) : "new home"}`;
+}
+
+function cardAddress(address) {
+  return String(address || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(", ");
+}
+
+function preview(text, max = 88) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max - 1).trim()}…`;
+}
+
+function noteKey(homeId, kind) {
+  return `${homeId}:${kind}`;
+}
+
+function noteDraft(home, kind) {
+  const key = noteKey(home.id, kind);
+  if (Object.prototype.hasOwnProperty.call(ui.notes, key)) return ui.notes[key];
+  return kind === "customer" ? home.customerNote || "" : home.cleanerNote || "";
+}
+
+function lastDoneText(task, viewer, now) {
+  const last = latestCompletion(task);
+  if (!last) return "Not done yet";
+  const when = new Date(last.at);
+  if (Number.isNaN(when.getTime())) return "Not done yet";
+  const who = last.accountId === viewer?.id ? "you" : firstName(last.name);
+  if (isSameDay(when, now)) return `Done today by ${who}`;
+  return `Last done ${formatDate(when)} by ${who}`;
+}
+
+function doneToday(task, now) {
+  const last = latestCompletion(task);
+  if (!last) return false;
+  const when = new Date(last.at);
+  return !Number.isNaN(when.getTime()) && isSameDay(when, now);
+}
+
+function logo() {
+  return `<svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="14" fill="#146056"/><path d="M9 22.5 24 11l15 11.5V38a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V22.5z" fill="#fff8ef"/><path d="M20.5 39V28.5h7V39" fill="#e0b15c"/></svg>`;
+}
+
+function chevron() {
+  return `<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function backIcon() {
+  return `<svg class="icon-back" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function visibleHome(state) {
+  const homes = repo.visibleHomes();
+  if (!state.view.homeId) return homes[0] || null;
+  return homes.find((home) => home.id === state.view.homeId) || null;
+}
+
+function renderDemo(state) {
+  const current = repo.currentAccount();
+  const options = orderedAccounts(state)
+    .map((account) => {
+      const selected = account.id === current?.id ? " selected" : "";
+      return `<option value="${esc(account.id)}"${selected}>${esc(optionLabel(state, account))}</option>`;
+    })
+    .join("");
+  return `<div class="demo">
+    <div class="demo-kicker"><strong>Demo</strong><span>Saved on this phone only</span></div>
+    <label class="demo-label" for="role-switch">Viewing as
+      <select id="role-switch">${options}</select>
+    </label>
+    <div class="demo-actions">
+      <button type="button" class="btn" data-action="show-link">Link a new home</button>
+      <button type="button" class="btn" data-action="ask-reset">Reset demo data</button>
+    </div>
+  </div>`;
+}
+
+function renderHeader(state) {
+  const account = repo.currentAccount();
+  const view = state.view;
+  const home = visibleHome(state);
+  let back = "";
+  let title = APP_NAME;
+  let lede = "";
+
+  if (view.screen === "link") {
+    const backLabel = account?.role === "cleaner" ? "Homes" : "Back";
+    back = `<button type="button" class="back" data-action="back">${backIcon()} ${esc(backLabel)}</button>`;
+    title = "Link a home";
+    lede = "Enter the code your cleaner gave you. This links the home to their list.";
+  } else if (account?.role === "cleaner" && view.screen === "home" && home) {
+    const customer = customerOf(state, home);
+    back = `<button type="button" class="back" data-action="back">${backIcon()} Homes</button>`;
+    title = customer?.name || home.name;
+    const now = today();
+    const { upcoming } = tasksWithStatus(home, now);
+    lede = `${home.address} · Next visit ${formatWhen(upcoming, now)}`;
+  } else if (account?.role === "cleaner") {
+    title = `Hello, ${firstName(account.name)}`;
+    lede = "Tap a home to see what's due this visit.";
+  } else if (home && account) {
+    const cleaner = cleanerOf(state, home);
+    title = "Your home";
+    lede = `${home.address}. Linked with ${cleaner ? cleaner.name : "your cleaner"}.`;
+  } else if (account) {
+    title = `Hello, ${firstName(account.name)}`;
+    lede = "Link your home with the code from your cleaner.";
+  }
+
+  return `<header class="hero">
+    <div class="brand-row">${logo()}<p class="brand">${esc(APP_NAME)}</p></div>
+    ${back}
+    <h1>${esc(title)}</h1>
+    ${lede ? `<p class="lede">${esc(lede)}</p>` : ""}
+  </header>`;
+}
+
+function renderMain(state) {
+  const account = repo.currentAccount();
+  const warning = repo.saveWarning();
+  const banner = warning ? `<p class="banner" role="status">${esc(warning)}</p>` : "";
+  let body = "";
+  if (state.view.screen === "link") body = renderLink(state);
+  else if (account?.role === "cleaner" && (state.view.screen !== "home" || !visibleHome(state))) body = renderOverview(state);
+  else body = renderHome(state, account);
+  return `<main id="main">${banner}${body}</main>`;
+}
+
+function renderOverview(state) {
+  const now = today();
+  const homes = repo.visibleHomes().slice().sort((a, b) => {
+    const aVisit = tasksWithStatus(a, now).upcoming.getTime();
+    const bVisit = tasksWithStatus(b, now).upcoming.getTime();
+    if (aVisit !== bVisit) return aVisit - bVisit;
+    return accountName(state, a.customerId).localeCompare(accountName(state, b.customerId), "en-GB");
+  });
+  const account = repo.currentAccount();
+  const cards = homes.length
+    ? `<div class="home-list">${homes.map((home) => renderHomeCard(state, home, now)).join("")}</div>`
+    : `<div class="empty"><p>No homes yet. Share your code and a customer can link theirs.</p></div>`;
+  return `<section class="invite">
+      <h2>Your invite code</h2>
+      <p class="code" id="invite-code">${esc(account?.inviteCode || "")}</p>
+      <p>Share this with a customer. They enter it to link their home to you.</p>
+      <div class="row">
+        <button type="button" class="btn primary" data-action="copy-code">Copy code</button>
+        <button type="button" class="btn ghost" data-action="share-code">Share</button>
+      </div>
+    </section>
+    ${cards}`;
+}
+
+function renderHomeCard(state, home, now) {
+  const { upcoming, rows } = tasksWithStatus(home, now);
+  const counts = countByState(rows);
+  const badge = counts.due
+    ? `<span class="badge due">${counts.due} due</span>`
+    : `<span class="badge ok">Nothing due</span>`;
+  const soon = counts.soon ? `<span class="soon-line">${counts.soon} due soon</span>` : "";
+  const note = preview(home.customerNote);
+  return `<button type="button" class="home-card" data-action="open-home" data-home="${esc(home.id)}">
+    <span class="home-top">
+      <span class="home-name">${esc(accountName(state, home.customerId))}</span>
+      ${badge}
+    </span>
+    <span class="address">${esc(cardAddress(home.address))}</span>
+    <span class="when">${esc(formatWhen(upcoming, now))} · ${esc(weekdayLabel(home.visitWeekday, { plural: true }))}</span>
+    ${soon}
+    ${note ? `<span class="preview">${esc(note)}</span>` : ""}
+    ${chevron()}
+  </button>`;
+}
+
+function renderHome(state, account) {
+  const home = visibleHome(state);
+  if (!home || !account) {
+    return `<div class="empty"><p>Link a home to start a cleaning schedule.</p>
+      <button type="button" class="btn primary" data-action="show-link">Link a new home</button></div>`;
+  }
+  const now = today();
+  const { rows } = tasksWithStatus(home, now);
+  const counts = countByState(rows);
+  const isCustomer = account.role === "customer";
+  const summary = rows.length
+    ? `<p class="summary"><span class="pill due">${counts.due} due</span><span class="pill soon">${counts.soon} due soon</span><span class="pill later">${counts.later} not needed yet</span></p>`
+    : "";
+  const visit = isCustomer ? renderVisitEditor(home) : "";
+  const tasks = isCustomer ? renderCustomerTasks(home, account, rows, now) : renderCleanerTasks(home, account, rows, now);
+  if (isCustomer) return `${summary}${visit}${tasks}${renderCustomerNotes(state, home)}`;
+  const customer = customerOf(state, home);
+  const name = customer ? firstName(customer.name) : "The customer";
+  const fromCustomer = home.customerNote
+    ? `<blockquote class="note-card quote"><p class="note-label">Note from ${esc(name)}</p><p class="note-body">${esc(home.customerNote)}</p></blockquote>`
+    : `<p class="quiet">No note from ${esc(name)} for this visit.</p>`;
+  return `${fromCustomer}${tasks}${renderCleanerReply(home, name)}`;
+}
+
+function renderCleanerReply(home, name) {
+  return `<section class="notes">
+    <label class="field" for="cleaner-note">Note back to ${esc(name)}
+      <textarea id="cleaner-note" data-home="${esc(home.id)}" data-kind="cleaner" maxlength="500" rows="3" placeholder="Leave a note after the visit, or ask for supplies">${esc(noteDraft(home, "cleaner"))}</textarea>
+    </label>
+    <button type="button" class="btn primary" data-action="save-note" data-kind="cleaner" data-home="${esc(home.id)}">Save note</button>
+  </section>`;
+}
+
+function renderVisitEditor(home) {
+  const options = WEEKDAYS.map((day) => {
+    const selected = normaliseWeekday(home.visitWeekday) === day ? " selected" : "";
+    return `<option value="${day}"${selected}>${esc(weekdayLabel(day, { plural: true }))}</option>`;
+  }).join("");
+  return `<label class="field" for="visit-weekday">Usual visit
+    <select id="visit-weekday" data-home="${esc(home.id)}">${options}</select>
+  </label>`;
+}
+
+function renderCustomerNotes(state, home) {
+  const cleaner = cleanerOf(state, home);
+  const cleanerName = cleaner ? firstName(cleaner.name) : "Your cleaner";
+  const reply = home.cleanerNote
+    ? `<blockquote class="note-card quote"><p class="note-label">${esc(cleanerName)} wrote</p><p class="note-body">${esc(home.cleanerNote)}</p></blockquote>`
+    : `<p class="quiet">No note back from ${esc(cleanerName)} yet.</p>`;
+  return `<section class="notes">
+    <label class="field" for="customer-note">Note for ${esc(cleanerName)}
+      <textarea id="customer-note" data-home="${esc(home.id)}" data-kind="customer" maxlength="500" rows="3" placeholder="Anything they should know for the next visit">${esc(noteDraft(home, "customer"))}</textarea>
+    </label>
+    <button type="button" class="btn primary" data-action="save-note" data-kind="customer" data-home="${esc(home.id)}">Save note</button>
+    ${reply}
+  </section>`;
+}
+
+function taskActions(home, task, now, { edit }) {
+  const todayDone = doneToday(task, now);
+  const verb = todayDone ? "Undo" : "Mark done";
+  const action = todayDone ? "undo" : "done";
+  const style = todayDone ? "ghost" : "primary";
+  const editButton = edit
+    ? `<button type="button" class="btn ghost" data-action="edit-task" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="Edit: ${esc(task.name)}">Edit</button>`
+    : "";
+  return `<div class="task-actions">
+    <button type="button" class="btn ${style}" data-action="${action}" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="${esc(verb)}: ${esc(task.name)}">${verb}</button>
+    ${editButton}
+  </div>`;
+}
+
+function renderCustomerTasks(home, account, rows, now) {
+  const add = `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}">Add a task</button></div>`;
+  if (!rows.length) {
+    return `${add}<div class="empty">
+      <p>Add rooms and tasks for this home. For example, clean the oven every 3 months, or hoover every visit.</p>
+      <button type="button" class="btn ghost" data-action="starter" data-home="${esc(home.id)}">Add a starter set</button>
+    </div>`;
+  }
+  const byRoom = new Map();
+  for (const row of rows) {
+    if (!byRoom.has(row.room.id)) byRoom.set(row.room.id, { room: row.room, rows: [] });
+    byRoom.get(row.room.id).rows.push(row);
+  }
+  const rooms = [...byRoom.values()]
+    .map(({ room, rows: roomRows }) => {
+      const tasks = roomRows
+        .map(({ task, status }) => {
+          return `<article class="task" id="task-${esc(task.id)}">
+            <div>
+              <h3>${esc(task.name)}</h3>
+              <p class="freq">${esc(formatFrequency(task.frequency))}</p>
+              <p><span class="pill ${esc(status.state)}">${esc(status.label)}</span></p>
+              <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
+              <p class="meta">${esc(lastDoneText(task, account, now))}</p>
+            </div>
+            ${taskActions(home, task, now, { edit: true })}
+          </article>`;
+        })
+        .join("");
+      return `<section class="room"><h2>${esc(room.name)}</h2>${tasks}</section>`;
+    })
+    .join("");
+  return `${add}${rooms}`;
+}
+
+function renderCleanerTasks(home, account, rows, now) {
+  if (!rows.length) {
+    return `<div class="empty"><p>No tasks yet. The customer adds the rooms and how often each job needs doing.</p></div>`;
+  }
+  const groups = [
+    ["due", "Due this visit", "Nothing is due this visit."],
+    ["soon", "Due soon", ""],
+    ["later", "Not needed yet", ""],
+  ];
+  return groups
+    .map(([stateName, title, empty]) => {
+      const items = rows.filter((row) => row.status.state === stateName);
+      if (!items.length && !empty) return "";
+      const list = items.length
+        ? items
+            .map(({ room, task, status }) => {
+              return `<article class="task" id="task-${esc(task.id)}">
+                <div>
+                  <h3>${esc(task.name)}</h3>
+                  <p class="freq">${esc(room.name)} · ${esc(formatFrequency(task.frequency))}</p>
+                  <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
+                  <p class="meta">${esc(lastDoneText(task, account, now))}</p>
+                </div>
+                ${taskActions(home, task, now, { edit: false })}
+              </article>`;
+            })
+            .join("")
+        : `<p class="quiet">${esc(empty)}</p>`;
+      return `<section class="group ${esc(stateName)}">
+        <div class="section-head"><h2>${esc(title)}</h2><span class="count">${items.length}</span></div>
+        ${list}
+      </section>`;
+    })
+    .join("");
+}
+
+function renderLink(state) {
+  const cleaners = state.accounts.filter((account) => account.role === "cleaner");
+  const hint = cleaners.length
+    ? `Demo tip: ${cleaners.map((account) => `${firstName(account.name)}'s code is ${account.inviteCode}`).join(". ")}.`
+    : "";
+  const days = WEEKDAYS.map((day) => {
+    const selected = ui.link.visitWeekday === day ? " selected" : "";
+    return `<option value="${day}"${selected}>${esc(weekdayLabel(day, { plural: true }))}</option>`;
+  }).join("");
+  const error = ui.linkError ? `<p class="form-error" role="alert">${esc(ui.linkError)}</p>` : "";
+  return `<form id="link-form" class="sheet-form" novalidate>
+    ${error}
+    <label class="field" for="customer-name">Your name
+      <input id="customer-name" name="customerName" type="text" maxlength="80" autocomplete="name" enterkeyhint="next" required value="${esc(ui.link.customerName)}" />
+    </label>
+    <label class="field" for="home-name">Home name <span class="optional">(optional)</span>
+      <input id="home-name" name="homeName" type="text" maxlength="40" autocomplete="off" enterkeyhint="next" placeholder="For example, Maple Road" value="${esc(ui.link.homeName)}" />
+    </label>
+    <label class="field" for="address">Address
+      <input id="address" name="address" type="text" maxlength="120" autocomplete="street-address" enterkeyhint="next" required value="${esc(ui.link.address)}" />
+    </label>
+    <label class="field" for="link-day">Usual visit
+      <select id="link-day" name="visitWeekday">${days}</select>
+    </label>
+    <label class="field" for="invite-code">Invite code
+      <input id="invite-code" name="inviteCode" type="text" maxlength="20" autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="done" required value="${esc(ui.link.inviteCode)}" />
+    </label>
+    ${hint ? `<p class="quiet">${esc(hint)}</p>` : ""}
+    <div class="page-actions">
+      <button type="submit" class="btn primary">Link home</button>
+    </div>
+  </form>`;
+}
+
+function renderToast() {
+  if (!ui.toast) return "";
+  const undo = ui.toast.undo
+    ? `<button type="button" class="btn ghost" data-action="undo" data-home="${esc(ui.toast.undo.homeId)}" data-task="${esc(ui.toast.undo.taskId)}">Undo</button>`
+    : "";
+  return `<div class="toast" role="status">${esc(ui.toast.message)}${undo}</div>`;
+}
+
+function renderModal() {
+  if (ui.confirmReset) return renderResetDialog();
+  if (ui.sheet?.confirmDelete) return renderDeleteDialog();
+  if (ui.sheet) return renderTaskSheet();
+  return "";
+}
+
+function renderResetDialog() {
+  return `<div class="backdrop center">
+    <div class="sheet dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+      <div class="sheet-body">
+        <h2 id="reset-title">Reset demo data?</h2>
+        <p>This puts Priya's three sample homes back, and removes notes, tasks, and homes added on this phone.</p>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" data-action="confirm-reset">Reset demo data</button>
+        <button type="button" class="btn ghost" data-action="cancel-reset">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDeleteDialog() {
+  const name = ui.sheet.name || "this task";
+  return `<div class="backdrop center">
+    <div class="sheet dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+      <div class="sheet-body">
+        <h2 id="delete-title">Delete this task?</h2>
+        <p>${esc(name)} will come off the schedule for this home.</p>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="btn danger" data-action="confirm-delete">Delete task</button>
+        <button type="button" class="btn ghost" data-action="cancel-delete">Keep it</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderTaskSheet() {
+  const state = repo.getState();
+  const home = repo.homeById(ui.sheet.homeId);
+  if (!home) return "";
+  const sheet = ui.sheet;
+  const title = sheet.mode === "edit" ? "Edit task" : "Add a task";
+  const roomChoices = home.rooms
+    .map((room) => {
+      const selected = sheet.roomId === room.id ? " selected" : "";
+      return `<option value="${esc(room.id)}"${selected}>${esc(room.name)}</option>`;
+    })
+    .join("");
+  const newSelected = sheet.roomId === "__new" || home.rooms.length === 0 ? " selected" : "";
+  const showNew = sheet.roomId === "__new" || home.rooms.length === 0;
+  const roomField = home.rooms.length
+    ? `<label class="field" for="room-id">Room
+        <select id="room-id" name="roomId">${roomChoices}<option value="__new"${newSelected}>New room…</option></select>
+      </label>
+      <label class="field" id="new-room-field" for="new-room-name"${showNew ? "" : " hidden"}>New room name
+        <input id="new-room-name" name="newRoomName" type="text" maxlength="40" autocomplete="off" value="${esc(sheet.newRoomName)}" />
+      </label>`
+    : `<label class="field" for="new-room-name">Room
+        <input id="new-room-name" name="newRoomName" type="text" maxlength="40" autocomplete="off" placeholder="Kitchen, bathroom, bedroom…" value="${esc(sheet.newRoomName)}" required />
+      </label>`;
+  const choices = PRESETS.map(([id, label]) => {
+    const checked = sheet.preset === id ? " checked" : "";
+    return `<label class="choice"><input type="radio" name="preset" value="${id}"${checked} /> ${esc(label)}</label>`;
+  }).join("");
+  const customHidden = sheet.preset === "custom" ? "" : " hidden";
+  const unit = ["days", "weeks", "months"]
+    .map((item) => `<option value="${item}"${sheet.unit === item ? " selected" : ""}>${item}</option>`)
+    .join("");
+  const error = sheet.error ? `<p class="form-error" role="alert">${esc(sheet.error)}</p>` : "";
+  const remove = sheet.mode === "edit"
+    ? `<button type="button" class="btn danger" data-action="ask-delete">Delete task</button>`
+    : "";
+  return `<div class="backdrop">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="task-title">
+      <form id="task-form" novalidate>
+        <div class="sheet-body">
+          <h2 id="task-title">${title}</h2>
+          ${error}
+          <label class="field" for="task-name">Task
+            <input id="task-name" name="name" type="text" maxlength="80" autocomplete="off" enterkeyhint="next" required value="${esc(sheet.name)}" />
+          </label>
+          ${roomField}
+          <fieldset>
+            <legend>How often</legend>
+            ${choices}
+          </fieldset>
+          <div class="custom-row" id="custom-frequency"${customHidden}>
+            <label class="field" for="every">Every
+              <input id="every" name="every" type="number" inputmode="numeric" min="1" max="36" value="${esc(sheet.every)}" />
+            </label>
+            <label class="field" for="unit"><span class="sr-only">Days, weeks, or months</span>
+              <select id="unit" name="unit">${unit}</select>
+            </label>
+          </div>
+        </div>
+        <div class="sheet-actions">
+          <button type="submit" class="btn primary">Save task</button>
+          <button type="button" class="btn ghost" data-action="close-sheet">Cancel</button>
+          ${remove}
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function render(options = {}) {
+  const root = document.querySelector("#app");
+  const state = repo.getState();
+  const y = options.scroll === "top" ? 0 : window.scrollY;
+  root.innerHTML = `${renderDemo(state)}${renderHeader(state)}${renderMain(state)}${renderToast()}${renderModal()}`;
+  document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.confirmReset));
+  if (options.scroll === "top") window.scrollTo(0, 0);
+  else window.scrollTo(0, y);
+  if (ui.scrollToId) {
+    document.getElementById(ui.scrollToId)?.scrollIntoView({ block: "center" });
+    ui.scrollToId = "";
+  }
+  if (options.focus) document.getElementById(options.focus)?.focus();
+}
+
+function showToast(toast, options = {}) {
+  ui.toast = toast;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    ui.toast = null;
+    render({ scroll: "keep" });
+  }, 6000);
+  render(options);
+}
+
+function clearTransient() {
+  ui.sheet = null;
+  ui.confirmReset = false;
+  ui.toast = null;
+  ui.linkError = "";
+  ui.notes = {};
+  clearTimeout(toastTimer);
+}
+
+function readLinkForm() {
+  const form = document.getElementById("link-form");
+  if (!form) return;
+  const data = new FormData(form);
+  ui.link = {
+    customerName: String(data.get("customerName") || ""),
+    homeName: String(data.get("homeName") || ""),
+    address: String(data.get("address") || ""),
+    visitWeekday: normaliseWeekday(data.get("visitWeekday")),
+    inviteCode: String(data.get("inviteCode") || ""),
+  };
+}
+
+function openTaskSheet({ homeId, task = null, roomId = "" }) {
+  if (task) {
+    const preset = presetForFrequency(task.frequency);
+    ui.sheet = {
+      mode: "edit",
+      homeId,
+      taskId: task.id,
+      roomId: roomId || "__new",
+      newRoomName: "",
+      name: task.name,
+      preset,
+      every: task.frequency?.every ? String(task.frequency.every) : "2",
+      unit: ["days", "weeks", "months"].includes(task.frequency?.unit) ? task.frequency.unit : "weeks",
+      error: "",
+      confirmDelete: false,
+    };
+  } else {
+    ui.sheet = {
+      mode: "create",
+      homeId,
+      taskId: null,
+      roomId: roomId || "__new",
+      newRoomName: "",
+      name: "",
+      preset: "visit",
+      every: "2",
+      unit: "weeks",
+      error: "",
+      confirmDelete: false,
+    };
+  }
+  render({ focus: "task-name" });
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-999px";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (copyError) {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  }
+}
+
+async function handleClick(event) {
+  const button = event.target.closest("[data-action]");
+  if (event.target.classList?.contains("backdrop")) {
+    ui.sheet = null;
+    ui.confirmReset = false;
+    render();
+    return;
+  }
+  if (!button) return;
+  const action = button.dataset.action;
+  const homeId = button.dataset.home || repo.getState().view.homeId;
+  const taskId = button.dataset.task || "";
+
+  if (action === "ask-reset") {
+    ui.confirmReset = true;
+    ui.sheet = null;
+    render();
+    return;
+  }
+  if (action === "cancel-reset") {
+    ui.confirmReset = false;
+    render();
+    return;
+  }
+  if (action === "confirm-reset") {
+    clearTransient();
+    ui.link = emptyLink();
+    await repo.reset();
+    showToast({ message: "Demo data reset." }, { scroll: "top" });
+    return;
+  }
+  if (action === "show-link") {
+    ui.sheet = null;
+    ui.linkError = "";
+    await repo.showLinkForm();
+    render({ scroll: "top", focus: "customer-name" });
+    return;
+  }
+  if (action === "back") {
+    ui.sheet = null;
+    await repo.cancelLink();
+    if (repo.getState().view.screen === "home" && repo.currentAccount()?.role === "cleaner") {
+      await repo.setAccount(repo.currentAccount().id);
+    }
+    render({ scroll: "top" });
+    return;
+  }
+  if (action === "open-home") {
+    const result = await repo.openHome(button.dataset.home);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't open that home." });
+      return;
+    }
+    render({ scroll: "top" });
+    return;
+  }
+  if (action === "copy-code" || action === "share-code") {
+    const code = repo.currentAccount()?.inviteCode || "";
+    if (action === "share-code" && navigator.share) {
+      try {
+        await navigator.share({
+          title: APP_NAME,
+          text: `Link your home in ${APP_NAME} with my code: ${code}`,
+        });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    const ok = await copyText(code);
+    showToast({ message: ok ? "Code copied." : "Select the code and copy it." });
+    return;
+  }
+  if (action === "save-note") {
+    const kind = button.dataset.kind;
+    const field = document.getElementById(kind === "customer" ? "customer-note" : "cleaner-note");
+    const result = await repo.setNote(homeId, kind, field ? field.value : "");
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't save the note." });
+      return;
+    }
+    delete ui.notes[noteKey(homeId, kind)];
+    showToast({ message: "Note saved." });
+    return;
+  }
+  if (action === "done") {
+    const result = await repo.markDone(homeId, taskId);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't mark that done." });
+      return;
+    }
+    showToast({ message: "Marked done.", undo: { homeId, taskId } });
+    return;
+  }
+  if (action === "undo") {
+    const result = await repo.undoToday(homeId, taskId);
+    ui.toast = null;
+    clearTimeout(toastTimer);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't undo that." });
+      return;
+    }
+    showToast({ message: "Undone." });
+    return;
+  }
+  if (action === "add-task") {
+    const home = repo.homeById(homeId);
+    openTaskSheet({ homeId, roomId: home?.rooms[0]?.id || "__new" });
+    return;
+  }
+  if (action === "edit-task") {
+    const home = repo.homeById(homeId);
+    let found = null;
+    for (const room of home?.rooms || []) {
+      const task = room.tasks.find((item) => item.id === taskId);
+      if (task) found = { room, task };
+    }
+    if (!found) return;
+    openTaskSheet({ homeId, task: found.task, roomId: found.room.id });
+    return;
+  }
+  if (action === "close-sheet") {
+    ui.sheet = null;
+    render();
+    return;
+  }
+  if (action === "ask-delete") {
+    if (!ui.sheet) return;
+    ui.sheet.confirmDelete = true;
+    ui.sheet.name = document.getElementById("task-name")?.value || ui.sheet.name;
+    render();
+    return;
+  }
+  if (action === "cancel-delete") {
+    if (ui.sheet) ui.sheet.confirmDelete = false;
+    render({ focus: "task-name" });
+    return;
+  }
+  if (action === "confirm-delete") {
+    if (!ui.sheet) return;
+    const result = await repo.deleteTask(ui.sheet.homeId, ui.sheet.taskId);
+    ui.sheet = null;
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't delete that task." });
+      return;
+    }
+    showToast({ message: "Task deleted." });
+    return;
+  }
+  if (action === "starter") {
+    const result = await repo.addStarterSet(homeId);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't add starter tasks." });
+      return;
+    }
+    showToast({ message: "Starter tasks added. Change anything that doesn't fit." }, { scroll: "top" });
+  }
+}
+
+async function handleSubmit(event) {
+  if (event.target.id === "link-form") {
+    readLinkForm();
+    const result = await repo.linkHome(ui.link);
+    if (!result.ok) {
+      ui.linkError = result.error;
+      render({ focus: "invite-code" });
+      return;
+    }
+    ui.link = emptyLink();
+    ui.linkError = "";
+    showToast({ message: "Home linked. You're seeing it as the customer." }, { scroll: "top" });
+    return;
+  }
+  if (event.target.id === "task-form") {
+    const data = new FormData(event.target);
+    const preset = String(data.get("preset") || "visit");
+    const frequency = frequencyFromPreset(preset, data.get("every"), data.get("unit"));
+    const roomId = String(data.get("roomId") || ui.sheet?.roomId || "__new");
+    const result = await repo.saveTask(ui.sheet.homeId, {
+      taskId: ui.sheet.taskId,
+      roomId,
+      newRoomName: data.get("newRoomName"),
+      name: data.get("name"),
+      frequency,
+    });
+    if (!result.ok) {
+      ui.sheet = {
+        ...ui.sheet,
+        name: String(data.get("name") || ""),
+        roomId,
+        newRoomName: String(data.get("newRoomName") || ""),
+        preset,
+        every: String(data.get("every") || "2"),
+        unit: String(data.get("unit") || "weeks"),
+        error: result.error,
+        confirmDelete: false,
+      };
+      render({ focus: "task-name" });
+      return;
+    }
+    ui.scrollToId = `task-${result.taskId}`;
+    ui.sheet = null;
+    showToast({ message: "Task saved." });
+  }
+}
+
+function handleChange(event) {
+  const target = event.target;
+  if (target.id === "role-switch") {
+    clearTransient();
+    void repo.setAccount(target.value).then(() => render({ scroll: "top" }));
+    return;
+  }
+  if (target.id === "visit-weekday") {
+    void repo.setVisitWeekday(target.dataset.home, target.value).then((result) => {
+      if (!result.ok) {
+        showToast({ message: result.error || "Couldn't save the visit day." });
+        return;
+      }
+      showToast({ message: "Visit day saved." });
+    });
+    return;
+  }
+  if (target.id === "room-id") {
+    const field = document.getElementById("new-room-field");
+    if (field) field.hidden = target.value !== "__new";
+    return;
+  }
+  if (target.name === "preset") {
+    const custom = document.getElementById("custom-frequency");
+    if (custom) custom.hidden = target.value !== "custom";
+  }
+}
+
+function handleInput(event) {
+  const target = event.target;
+  if (target.dataset?.kind && target.dataset.home) {
+    ui.notes[noteKey(target.dataset.home, target.dataset.kind)] = target.value;
+    return;
+  }
+  if (target.form?.id === "link-form") readLinkForm();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  if (location.protocol !== "http:" && location.protocol !== "https:") return;
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+function bind() {
+  document.addEventListener("click", (event) => {
+    void handleClick(event);
+  });
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (form?.id === "link-form" || form?.id === "task-form") {
+      event.preventDefault();
+      void handleSubmit(event);
+    }
+  });
+  document.addEventListener("change", handleChange);
+  document.addEventListener("input", handleInput);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!ui.sheet && !ui.confirmReset) return;
+    ui.sheet = null;
+    ui.confirmReset = false;
+    render();
+  });
+}
+
+bind();
+void repo.load().then(() => {
+  render({ scroll: "top" });
+  registerServiceWorker();
+});
