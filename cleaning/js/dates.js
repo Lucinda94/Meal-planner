@@ -69,6 +69,42 @@ export function formatDate(date) {
   return `${SHORT_DAYS[value.getDay()]} ${value.getDate()} ${MONTHS[value.getMonth()]}`;
 }
 
+/** Day, month, year, as in 12 Oct 2026. */
+export function formatUkDate(date) {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  return `${value.getDate()} ${MONTHS[value.getMonth()]} ${value.getFullYear()}`;
+}
+
+/** Value for `<input type="date">`, using the local calendar day. */
+export function toDateInputValue(date) {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * Read a date-picker value (YYYY-MM-DD) as local noon.
+ * An empty value is allowed and means no date.
+ * Do not use `new Date("YYYY-MM-DD")` — that is UTC midnight and can land on the previous day.
+ */
+export function parseDateInput(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return { ok: true, date: null };
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return { ok: false, date: null, error: "That date isn't valid." };
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return { ok: false, date: null, error: "That date isn't valid." };
+  }
+  return { ok: true, date };
+}
+
 export function formatWhen(date, today) {
   const diff = daysBetween(today, date);
   if (diff === 0) return "Today";

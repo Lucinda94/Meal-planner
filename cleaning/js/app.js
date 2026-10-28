@@ -1,5 +1,15 @@
 import { APP_NAME } from "./config.js";
-import { WEEKDAYS, formatDate, formatWhen, isSameDay, normaliseWeekday, weekdayLabel } from "./dates.js";
+import {
+  WEEKDAYS,
+  formatUkDate,
+  formatWhen,
+  isSameDay,
+  normaliseWeekday,
+  parseDateInput,
+  startOfDay,
+  toDateInputValue,
+  weekdayLabel,
+} from "./dates.js";
 import {
   countByState,
   formatFrequency,
@@ -22,6 +32,7 @@ const PRESETS = [
 const repo = createDemoRepository();
 const ui = {
   sheet: null,
+  doneOn: null,
   confirmReset: false,
   pendingDelete: null,
   menu: null,
@@ -120,7 +131,59 @@ function lastDoneText(task, viewer, now) {
   if (Number.isNaN(when.getTime())) return "Not done yet";
   const who = last.accountId === viewer?.id ? "you" : firstName(last.name);
   if (isSameDay(when, now)) return `Done today by ${who}`;
-  return `Last done ${formatDate(when)} by ${who}`;
+  return `Last done ${formatUkDate(when)} by ${who}`;
+}
+
+function lastDoneInputValue(task) {
+  const last = latestCompletion(task);
+  if (!last) return "";
+  const when = new Date(last.at);
+  if (Number.isNaN(when.getTime())) return "";
+  return toDateInputValue(when);
+}
+
+function dateFaceText(kind, value) {
+  const parsed = parseDateInput(value);
+  if (!String(value || "").trim()) return kind === "done-on" ? "Choose a date" : "Not done yet";
+  if (!parsed.ok) return "That date isn't valid";
+  if (startOfDay(parsed.date).getTime() > startOfDay(today()).getTime()) return "That date is in the future";
+  return formatUkDate(parsed.date);
+}
+
+function dateHintFor(kind, value) {
+  const blank =
+    kind === "done-on"
+      ? "Choose the day it was actually done. A future day isn't allowed."
+      : "Leave this blank if it has never been done. It will show as due.";
+  if (!String(value || "").trim()) return blank;
+  const parsed = parseDateInput(value);
+  if (!parsed.ok) return parsed.error;
+  if (startOfDay(parsed.date).getTime() > startOfDay(today()).getTime()) {
+    return "That date is in the future. Choose today or an earlier day.";
+  }
+  const shown = formatUkDate(parsed.date);
+  if (kind === "done-on") return `Shows as ${shown}. The next due date is worked out from this day.`;
+  return `Shows as ${shown}. Saving updates when it is next due.`;
+}
+
+function dateField(options) {
+  const empty = !String(options.value || "").trim();
+  return `<div class="date-wrap">
+    <div class="date-face${empty ? " is-empty" : ""}" id="${esc(options.faceId)}" aria-hidden="true">${esc(dateFaceText(options.kind, options.value))}</div>
+    <input id="${esc(options.id)}" name="${esc(options.name)}" type="date" lang="en-GB" max="${esc(toDateInputValue(today()))}" autocomplete="off" value="${esc(options.value)}" aria-describedby="${esc(options.hintId)}" data-date-hint="${esc(options.kind)}" data-date-face="${esc(options.faceId)}"${options.required ? " required" : ""} />
+  </div>`;
+}
+
+function writeDateHint(input) {
+  if (!input) return;
+  const hint = document.getElementById(input.getAttribute("aria-describedby") || "");
+  if (hint) hint.textContent = dateHintFor(input.dataset.dateHint, input.value);
+  const face = document.getElementById(input.dataset.dateFace || "");
+  if (!face) return;
+  const parsed = parseDateInput(input.value);
+  const ready = parsed.ok && parsed.date && startOfDay(parsed.date).getTime() <= startOfDay(today()).getTime();
+  face.textContent = dateFaceText(input.dataset.dateHint, input.value);
+  face.classList.toggle("is-empty", !ready);
 }
 
 function doneToday(task, now) {
@@ -344,6 +407,7 @@ function taskMenu(home, task) {
   const menuId = `menu-${task.id}`;
   const pop = open
     ? `<div class="menu-pop" id="${esc(menuId)}" role="menu">
+        <button type="button" class="menu-item" role="menuitem" data-action="done-on" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Done on a different day?</button>
         <button type="button" class="menu-item" role="menuitem" data-action="edit-task" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Edit</button>
         <button type="button" class="menu-item menu-delete" role="menuitem" data-action="ask-delete" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Delete</button>
       </div>`
@@ -360,6 +424,7 @@ function taskActions(home, task, now) {
   const style = todayDone ? "ghost" : "primary";
   return `<div class="task-actions">
     <button type="button" class="btn ${style}" data-action="${action}" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="${esc(verb)}: ${esc(task.name)}">${verb}</button>
+    <button type="button" class="text-action" data-action="done-on" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Done on a different day?</button>
   </div>`;
 }
 
@@ -489,6 +554,7 @@ function renderToast() {
 function renderModal() {
   if (ui.confirmReset) return renderResetDialog();
   if (ui.pendingDelete) return renderDeleteDialog();
+  if (ui.doneOn) return renderDoneOnSheet();
   if (ui.sheet) return renderTaskSheet();
   return "";
 }
@@ -579,10 +645,40 @@ function renderTaskSheet() {
               <select id="unit" name="unit">${unit}</select>
             </label>
           </div>
+          <label class="field" for="last-done">Last done <span class="optional">(optional)</span>
+            ${dateField({ id: "last-done", name: "lastDone", kind: "last-done", faceId: "last-done-face", hintId: "last-done-hint", value: sheet.lastDone })}
+          </label>
+          <p class="date-hint" id="last-done-hint">${esc(dateHintFor("last-done", sheet.lastDone))}</p>
+          <button type="button" class="text-action" data-action="clear-last-done">Not done yet</button>
         </div>
         <div class="sheet-actions">
           <button type="submit" class="btn primary">Save task</button>
           <button type="button" class="btn ghost" data-action="close-sheet">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderDoneOnSheet() {
+  const done = ui.doneOn;
+  if (!done) return "";
+  const error = done.error ? `<p class="form-error" role="alert">${esc(done.error)}</p>` : "";
+  return `<div class="backdrop">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="done-title">
+      <form id="done-on-form" novalidate>
+        <div class="sheet-body">
+          <h2 id="done-title">Done on a different day?</h2>
+          <p>Mark "${esc(done.name)}" done on the day it was actually finished. The usual Mark done button still means today.</p>
+          ${error}
+          <label class="field" for="done-on">When was it done?
+            ${dateField({ id: "done-on", name: "doneOn", kind: "done-on", faceId: "done-on-face", hintId: "done-on-hint", value: done.date, required: true })}
+          </label>
+          <p class="date-hint" id="done-on-hint">${esc(dateHintFor("done-on", done.date))}</p>
+        </div>
+        <div class="sheet-actions">
+          <button type="submit" class="btn primary">Mark done on this day</button>
+          <button type="button" class="btn ghost" data-action="close-done-on">Cancel</button>
         </div>
       </form>
     </div>
@@ -594,7 +690,7 @@ function render(options = {}) {
   const state = repo.getState();
   const y = options.scroll === "top" ? 0 : window.scrollY;
   root.innerHTML = `${renderDemo(state)}${renderHeader(state)}${renderMain(state)}${renderToast()}${renderModal()}`;
-  document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.confirmReset || ui.pendingDelete));
+  document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.doneOn || ui.confirmReset || ui.pendingDelete));
   if (options.scroll === "top") window.scrollTo(0, 0);
   else window.scrollTo(0, y);
   if (ui.scrollToId) {
@@ -616,6 +712,7 @@ function showToast(toast, options = {}) {
 
 function clearTransient() {
   ui.sheet = null;
+  ui.doneOn = null;
   ui.confirmReset = false;
   ui.pendingDelete = null;
   ui.menu = null;
@@ -647,9 +744,16 @@ function readLinkForm() {
   };
 }
 
+function dismissToast() {
+  ui.toast = null;
+  clearTimeout(toastTimer);
+}
+
 function openTaskSheet({ homeId, task = null, roomId = "" }) {
   ui.menu = null;
   ui.pendingDelete = null;
+  ui.doneOn = null;
+  dismissToast();
   if (task) {
     const preset = presetForFrequency(task.frequency);
     ui.sheet = {
@@ -662,6 +766,7 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       preset,
       every: task.frequency?.every ? String(task.frequency.every) : "2",
       unit: ["days", "weeks", "months"].includes(task.frequency?.unit) ? task.frequency.unit : "weeks",
+      lastDone: lastDoneInputValue(task),
       error: "",
     };
   } else {
@@ -675,10 +780,26 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       preset: "visit",
       every: "2",
       unit: "weeks",
+      lastDone: "",
       error: "",
     };
   }
   render({ focus: "task-name" });
+}
+
+function openDoneOn(homeId, taskId) {
+  const found = findTaskInHome(homeId, taskId);
+  ui.menu = null;
+  dismissToast();
+  if (!found) {
+    render();
+    return;
+  }
+  ui.sheet = null;
+  ui.pendingDelete = null;
+  ui.confirmReset = false;
+  ui.doneOn = { homeId, taskId: found.task.id, name: found.task.name, date: "", error: "" };
+  render({ focus: "done-on" });
 }
 
 async function copyText(text) {
@@ -709,6 +830,7 @@ async function handleClick(event) {
   const insideMenu = Boolean(event.target.closest(".task-menu, .menu-pop"));
   if (event.target.classList?.contains("backdrop")) {
     ui.sheet = null;
+    ui.doneOn = null;
     ui.confirmReset = false;
     ui.pendingDelete = null;
     ui.menu = null;
@@ -846,8 +968,26 @@ async function handleClick(event) {
     openTaskSheet({ homeId, task: found.task, roomId: found.room.id });
     return;
   }
+  if (action === "done-on") {
+    openDoneOn(homeId, taskId);
+    return;
+  }
+  if (action === "clear-last-done") {
+    const input = document.getElementById("last-done");
+    if (input) {
+      input.value = "";
+      writeDateHint(input);
+      input.focus();
+    }
+    return;
+  }
   if (action === "close-sheet") {
     ui.sheet = null;
+    render();
+    return;
+  }
+  if (action === "close-done-on") {
+    ui.doneOn = null;
     render();
     return;
   }
@@ -909,30 +1049,70 @@ async function handleSubmit(event) {
     const preset = String(data.get("preset") || "visit");
     const frequency = frequencyFromPreset(preset, data.get("every"), data.get("unit"));
     const roomId = String(data.get("roomId") || ui.sheet?.roomId || "__new");
+    const lastDoneRaw = String(data.get("lastDone") || "");
+    const parsed = parseDateInput(lastDoneRaw);
+    const future = parsed.ok && parsed.date && startOfDay(parsed.date).getTime() > startOfDay(today()).getTime();
+    const draft = {
+      ...ui.sheet,
+      name: String(data.get("name") || ""),
+      roomId,
+      newRoomName: String(data.get("newRoomName") || ""),
+      preset,
+      every: String(data.get("every") || "2"),
+      unit: String(data.get("unit") || "weeks"),
+      lastDone: lastDoneRaw,
+    };
+    if (!parsed.ok || future) {
+      ui.sheet = { ...draft, error: future ? "Choose today or an earlier date." : parsed.error };
+      render({ focus: "last-done" });
+      return;
+    }
     const result = await repo.saveTask(ui.sheet.homeId, {
       taskId: ui.sheet.taskId,
       roomId,
       newRoomName: data.get("newRoomName"),
       name: data.get("name"),
       frequency,
+      lastDone: parsed.date,
     });
     if (!result.ok) {
-      ui.sheet = {
-        ...ui.sheet,
-        name: String(data.get("name") || ""),
-        roomId,
-        newRoomName: String(data.get("newRoomName") || ""),
-        preset,
-        every: String(data.get("every") || "2"),
-        unit: String(data.get("unit") || "weeks"),
-        error: result.error,
-      };
-      render({ focus: "task-name" });
+      ui.sheet = { ...draft, error: result.error };
+      render({ focus: result.error?.includes("date") ? "last-done" : "task-name" });
       return;
     }
     ui.scrollToId = `task-${result.taskId}`;
     ui.sheet = null;
     showToast({ message: "Task saved." });
+    return;
+  }
+  if (event.target.id === "done-on-form") {
+    const data = new FormData(event.target);
+    const raw = String(data.get("doneOn") || "");
+    const parsed = parseDateInput(raw);
+    const future = parsed.ok && parsed.date && startOfDay(parsed.date).getTime() > startOfDay(today()).getTime();
+    if (!parsed.ok || !parsed.date || future) {
+      ui.doneOn = {
+        ...ui.doneOn,
+        date: raw,
+        error: !parsed.ok ? parsed.error : future ? "Choose today or an earlier date." : "Choose the day it was done.",
+      };
+      render({ focus: "done-on" });
+      return;
+    }
+    const target = ui.doneOn;
+    const result = await repo.markDone(target.homeId, target.taskId, parsed.date);
+    if (!result.ok) {
+      ui.doneOn = { ...ui.doneOn, date: raw, error: result.error || "Couldn't mark that done." };
+      render({ focus: "done-on" });
+      return;
+    }
+    ui.doneOn = null;
+    ui.scrollToId = `task-${target.taskId}`;
+    const todayDone = isSameDay(parsed.date, today());
+    showToast({
+      message: todayDone ? "Marked done for today." : `Marked done on ${formatUkDate(parsed.date)}.`,
+      undo: todayDone ? { homeId: target.homeId, taskId: target.taskId } : undefined,
+    });
   }
 }
 
@@ -962,6 +1142,7 @@ function handleChange(event) {
     const custom = document.getElementById("custom-frequency");
     if (custom) custom.hidden = target.value !== "custom";
   }
+  if (target.dataset?.dateHint) writeDateHint(target);
 }
 
 function handleInput(event) {
@@ -971,6 +1152,7 @@ function handleInput(event) {
     return;
   }
   if (target.form?.id === "link-form") readLinkForm();
+  if (target.dataset?.dateHint) writeDateHint(target);
 }
 
 function registerServiceWorker() {
@@ -985,7 +1167,7 @@ function bind() {
   });
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (form?.id === "link-form" || form?.id === "task-form") {
+    if (form?.id === "link-form" || form?.id === "task-form" || form?.id === "done-on-form") {
       event.preventDefault();
       void handleSubmit(event);
     }
@@ -994,8 +1176,9 @@ function bind() {
   document.addEventListener("input", handleInput);
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
-    if (!ui.sheet && !ui.confirmReset && !ui.pendingDelete && !ui.menu) return;
+    if (!ui.sheet && !ui.doneOn && !ui.confirmReset && !ui.pendingDelete && !ui.menu) return;
     ui.sheet = null;
+    ui.doneOn = null;
     ui.confirmReset = false;
     ui.pendingDelete = null;
     ui.menu = null;

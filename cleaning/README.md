@@ -15,8 +15,9 @@ Everything is saved on this phone only. Nothing is sent to a server, and the cle
 - Priya looks after three homes around Bristol. Each home has rooms and tasks, with how often they need doing.
 - A task is **Due**, **Due soon**, or **Not needed yet**, from the last time it was done and how often it repeats.
 - The customer or Priya can mark a task done. That records who did it and when, and it drops off the due list until it is needed again. Helen has already cleaned her oven, so Priya can see it is not needed for three months.
-- Either person can add a task: the name, the room, and how often it repeats. Priya can add one from the visit screen, under the note from the customer. A short line says whether the cleaner or the customer added it. The other person sees the same task. Tasks that were already on the list stay as they are, with no extra line.
-- Either person can change or remove a task. Tap the three dots beside it, then Edit or Delete. Edit opens the name, the room, and how often, already filled in. Delete asks you to confirm first. Cancel leaves the task alone. The other person sees the change.
+- Either person can add a task: the name, the room, how often it repeats, and, if it has already been done, the date it was last done. Leave Last done blank if it has never been done. Priya can add one from the visit screen, under the note from the customer. A short line says whether the cleaner or the customer added it. The other person sees the same task. Tasks that were already on the list stay as they are, with no extra line.
+- Either person can change or remove a task. Tap the three dots beside it, then Edit or Delete. Edit opens the name, the room, how often, and Last done, already filled in. Change the date if it was done on a different day, or tap Not done yet to clear it. You can't pick a future day. Dates show as 12 Oct 2026. Saving updates when the task is next due, and the other person sees that straight away. Delete asks you to confirm first. Cancel leaves the task alone.
+- Mark done still means today, in one tap. Done on a different day? — under that button, or in the three-dot menu — lets you record an earlier day, for example last Tuesday. The next due date is worked out from the day you pick. A future day isn't allowed.
 - Priya’s home screen lists every home, the next visit, and how many tasks are due. Open a home for **Due this visit** and what can wait.
 - The customer and the cleaner can each leave a note.
 - Priya’s invite code is **MAPLE-7K**. **Link a new home** asks for that code.
@@ -36,7 +37,7 @@ Suggested tables:
 | `homes` | Address, visit weekday, customer id, cleaner id, and the two notes. |
 | `rooms` | A room in one home. |
 | `tasks` | The job, how often (`every visit`, or every N days, weeks, or months), and who added it (`cleaner` or `customer`) when that was recorded. |
-| `completions` | When a task was marked done, and which account did it. |
+| `completions` | When a task was marked done, including a date set by hand, and which account did it. |
 
 ### Supabase
 

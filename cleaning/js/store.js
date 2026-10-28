@@ -1,6 +1,6 @@
 import { STATE_VERSION, STORAGE_KEY } from "./config.js";
 import { buildSeed } from "./demo-data.js";
-import { normaliseWeekday } from "./dates.js";
+import { normaliseWeekday, startOfDay } from "./dates.js";
 import { latestCompletion, normaliseFrequency } from "./dueness.js";
 
 /**
@@ -139,6 +139,84 @@ export function createDemoRepository(options = {}) {
     };
   }
 
+  function noonOn(day) {
+    const at = startOfDay(day);
+    at.setHours(12, 0, 0, 0);
+    return at;
+  }
+
+  /**
+   * A chosen last-done day. null clears it. A Date must be today or earlier.
+   * Checked before any task is changed, so a bad date leaves the list alone.
+   */
+  function readLastDone(value) {
+    if (value == null || value === "") return { ok: true, date: null };
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+      return { ok: false, error: "That date isn't valid." };
+    }
+    if (startOfDay(value).getTime() > startOfDay(clock()).getTime()) {
+      return { ok: false, error: "Choose today or an earlier date." };
+    }
+    return { ok: true, date: value };
+  }
+
+  function completionOn(account, day) {
+    return {
+      at: noonOn(day).toISOString(),
+      accountId: account.id,
+      name: account.name,
+      role: account.role,
+    };
+  }
+
+  /**
+   * Make `date` the day the schedule counts from.
+   * Passing null means it has never been done.
+   * The person already recorded stays attached when only the day changes.
+   * Anything after the chosen day is dropped, so the new day is the latest.
+   */
+  function setLastDone(task, account, date) {
+    if (date == null) {
+      task.completions = [];
+      return { ok: true };
+    }
+    const day = startOfDay(date);
+    const existing = (Array.isArray(task.completions) ? task.completions : []).filter((item) => {
+      const when = new Date(item?.at);
+      return Boolean(item?.at) && !Number.isNaN(when.getTime());
+    });
+    const onDay = existing.filter((item) => startOfDay(new Date(item.at)).getTime() === day.getTime());
+    if (onDay.length) {
+      const chosen = onDay.reduce((best, item) => (!best || item.at >= best.at ? item : best));
+      const earlier = existing.filter((item) => startOfDay(new Date(item.at)).getTime() < day.getTime());
+      task.completions = [...earlier, chosen].slice(-COMPLETION_LIMIT);
+      return { ok: true };
+    }
+    const latest = latestCompletion({ completions: existing });
+    const chosen = latest ? { ...latest, at: noonOn(day).toISOString() } : completionOn(account, day);
+    const earlier = existing.filter((item) => {
+      if (latest && item === latest) return false;
+      return startOfDay(new Date(item.at)).getTime() < day.getTime();
+    });
+    task.completions = [...earlier, chosen].slice(-COMPLETION_LIMIT);
+    return { ok: true };
+  }
+
+  /**
+   * Record that this person did the task on `date`, and count the schedule from that day.
+   * A later tick (for example today, by mistake) is removed so the chosen day is the one that counts.
+   */
+  function recordDoneOn(task, account, date) {
+    const day = startOfDay(date);
+    const completion = completionOn(account, day);
+    const kept = (Array.isArray(task.completions) ? task.completions : []).filter((item) => {
+      const when = new Date(item?.at);
+      return Boolean(item?.at) && !Number.isNaN(when.getTime()) && startOfDay(when).getTime() <= day.getTime();
+    });
+    task.completions = [...kept, completion].slice(-COMPLETION_LIMIT);
+    return completion;
+  }
+
   return {
     async load() {
       if (state) return state;
@@ -272,12 +350,20 @@ export function createDemoRepository(options = {}) {
       return { ok: true };
     },
 
-    async markDone(homeId, taskId) {
+    async markDone(homeId, taskId, when) {
       const home = homeById(homeId);
       const account = currentAccount();
       if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
       const found = findTask(home, taskId);
       if (!found) return { ok: false, error: "That task is no longer there." };
+      if (when !== undefined) {
+        const chosen = readLastDone(when);
+        if (!chosen.ok) return chosen;
+        if (!chosen.date) return { ok: false, error: "Choose the day it was done." };
+        const completion = recordDoneOn(found.task, account, chosen.date);
+        persist();
+        return { ok: true, completion };
+      }
       const completion = {
         at: clock().toISOString(),
         accountId: account.id,
@@ -318,6 +404,13 @@ export function createDemoRepository(options = {}) {
       if (!name) return { ok: false, error: "Give the task a name." };
       const frequency = normaliseFrequency(input?.frequency);
       if (!frequency) return { ok: false, error: "Choose how often this task needs doing." };
+      const setsLastDone = Object.prototype.hasOwnProperty.call(input, "lastDone");
+      let nextLastDone = null;
+      if (setsLastDone) {
+        const chosen = readLastDone(input.lastDone);
+        if (!chosen.ok) return chosen;
+        nextLastDone = chosen.date;
+      }
 
       let room = null;
       if (input?.roomId && input.roomId !== "__new") {
@@ -345,6 +438,7 @@ export function createDemoRepository(options = {}) {
           }
           room.tasks.push(found.task);
         }
+        if (setsLastDone) setLastDone(found.task, account, nextLastDone);
         persist();
         return { ok: true, taskId: found.task.id };
       }
@@ -356,6 +450,7 @@ export function createDemoRepository(options = {}) {
         completions: [],
         addedBy: account.role === "cleaner" ? "cleaner" : "customer",
       };
+      if (setsLastDone) setLastDone(task, account, nextLastDone);
       room.tasks.push(task);
       persist();
       return { ok: true, taskId: task.id };

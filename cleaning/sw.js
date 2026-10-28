@@ -1,5 +1,5 @@
 /* Offline cache for Tidy Together only. Network first, so a refresh picks up edits. */
-const CACHE = "tidy-together-v1";
+const CACHE = "tidy-together-v2";
 const BASE = new URL("./", self.location);
 const FILES = [
   "index.html",
