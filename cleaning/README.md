@@ -16,6 +16,7 @@ Everything is saved on this phone only. Nothing is sent to a server, and the cle
 - A task is **Due**, **Due soon**, or **Not needed yet**, from the last time it was done and how often it repeats.
 - The customer or Priya can mark a task done. That records who did it and when, and it drops off the due list until it is needed again. Helen has already cleaned her oven, so Priya can see it is not needed for three months.
 - Either person can add a task: the name, the room, and how often it repeats. Priya can add one from the visit screen, under the note from the customer. A short line says whether the cleaner or the customer added it. The other person sees the same task. Tasks that were already on the list stay as they are, with no extra line.
+- Either person can change or remove a task. Tap the three dots beside it, then Edit or Delete. Edit opens the name, the room, and how often, already filled in. Delete asks you to confirm first. Cancel leaves the task alone. The other person sees the change.
 - Priya’s home screen lists every home, the next visit, and how many tasks are due. Open a home for **Due this visit** and what can wait.
 - The customer and the cleaner can each leave a note.
 - Priya’s invite code is **MAPLE-7K**. **Link a new home** asks for that code.
@@ -42,7 +43,7 @@ Suggested tables:
 Use a magic link (or similar) so each person has an `auth.uid()`. Turn on row-level security for every table.
 
 - A customer can read and update the home where `customer_id = auth.uid()`. A cleaner can read homes where `cleaner_id = auth.uid()`.
-- Rooms, tasks, and completions are allowed only when that person is allowed to see the home. Either linked person can add a task. Only the customer can edit or delete a task, change the visit day, or replace an empty list with the starter set. Either linked person can insert a completion. Undoing today’s tick deletes that latest row.
+- Rooms, tasks, and completions are allowed only when that person is allowed to see the home. Either linked person can add, edit, or delete a task. Only the customer can change the visit day or replace an empty list with the starter set. Either linked person can insert a completion. Undoing today’s tick deletes that latest row.
 - Notes stay on the home. The customer may update `customer_note`. The cleaner may update `cleaner_note`. A narrow policy or a trigger should stop either person editing the other’s note.
 - Don’t let a customer list every cleaner. A database function `link_home(invite_code, address, visit_weekday)` looks up the cleaner by code and inserts the home with `customer_id = auth.uid()`.
 

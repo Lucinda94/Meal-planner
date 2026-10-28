@@ -313,10 +313,7 @@ export function createDemoRepository(options = {}) {
       const home = homeById(homeId);
       const account = currentAccount();
       if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
-      // Either linked person can add a task. Changing one that already exists stays with the customer.
-      if (input?.taskId && account.role !== "customer") {
-        return { ok: false, error: "Only the customer can change an existing task." };
-      }
+      // Either linked person can add a task or change one that is already there.
       const name = String(input?.name || "").trim().slice(0, NAME_LIMIT);
       if (!name) return { ok: false, error: "Give the task a name." };
       const frequency = normaliseFrequency(input?.frequency);
@@ -366,10 +363,7 @@ export function createDemoRepository(options = {}) {
 
     async deleteTask(homeId, taskId) {
       const home = homeById(homeId);
-      const account = currentAccount();
-      if (!canAccess(home) || account.role !== "customer") {
-        return { ok: false, error: "Only the customer can change the schedule." };
-      }
+      if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
       const found = findTask(home, taskId);
       if (!found) return { ok: false, error: "That task is no longer there." };
       found.room.tasks.splice(found.taskIndex, 1);
