@@ -8,7 +8,7 @@ import {
   presetForFrequency,
   tasksWithStatus,
 } from "./dueness.js";
-import { createDemoRepository, firstName, shortAddress } from "./store.js";
+import { addedByLabel, createDemoRepository, firstName, shortAddress } from "./store.js";
 
 const PRESETS = [
   ["visit", "Every visit"],
@@ -320,6 +320,15 @@ function renderCustomerNotes(state, home) {
   </section>`;
 }
 
+function addedByMarkup(task) {
+  const label = addedByLabel(task);
+  return label ? `<p class="added-by">${esc(label)}</p>` : "";
+}
+
+function addTaskButton(home) {
+  return `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}">Add a task</button></div>`;
+}
+
 function taskActions(home, task, now, { edit }) {
   const todayDone = doneToday(task, now);
   const verb = todayDone ? "Undo" : "Mark done";
@@ -335,7 +344,7 @@ function taskActions(home, task, now, { edit }) {
 }
 
 function renderCustomerTasks(home, account, rows, now) {
-  const add = `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}">Add a task</button></div>`;
+  const add = addTaskButton(home);
   if (!rows.length) {
     return `${add}<div class="empty">
       <p>Add rooms and tasks for this home. For example, clean the oven every 3 months, or hoover every visit.</p>
@@ -358,6 +367,7 @@ function renderCustomerTasks(home, account, rows, now) {
               <p><span class="pill ${esc(status.state)}">${esc(status.label)}</span></p>
               <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
               <p class="meta">${esc(lastDoneText(task, account, now))}</p>
+              ${addedByMarkup(task)}
             </div>
             ${taskActions(home, task, now, { edit: true })}
           </article>`;
@@ -370,15 +380,16 @@ function renderCustomerTasks(home, account, rows, now) {
 }
 
 function renderCleanerTasks(home, account, rows, now) {
+  const add = addTaskButton(home);
   if (!rows.length) {
-    return `<div class="empty"><p>No tasks yet. The customer adds the rooms and how often each job needs doing.</p></div>`;
+    return `${add}<div class="empty"><p>No tasks yet. Add one, with the room and how often it needs doing.</p></div>`;
   }
   const groups = [
     ["due", "Due this visit", "Nothing is due this visit."],
     ["soon", "Due soon", ""],
     ["later", "Not needed yet", ""],
   ];
-  return groups
+  const groupsHtml = groups
     .map(([stateName, title, empty]) => {
       const items = rows.filter((row) => row.status.state === stateName);
       if (!items.length && !empty) return "";
@@ -391,6 +402,7 @@ function renderCleanerTasks(home, account, rows, now) {
                   <p class="freq">${esc(room.name)} · ${esc(formatFrequency(task.frequency))}</p>
                   <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
                   <p class="meta">${esc(lastDoneText(task, account, now))}</p>
+                  ${addedByMarkup(task)}
                 </div>
                 ${taskActions(home, task, now, { edit: false })}
               </article>`;
@@ -403,6 +415,7 @@ function renderCleanerTasks(home, account, rows, now) {
       </section>`;
     })
     .join("");
+  return `${add}${groupsHtml}`;
 }
 
 function renderLink(state) {

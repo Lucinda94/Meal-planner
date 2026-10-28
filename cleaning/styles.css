@@ -576,6 +576,13 @@ main {
   margin: 3px 0 0;
 }
 
+.added-by {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .detail.due {
   color: var(--due);
   font-weight: 700;

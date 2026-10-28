@@ -58,6 +58,13 @@ export function shortAddress(address) {
   return String(address || "").split(",")[0].trim();
 }
 
+/** Empty for tasks saved before anyone recorded who added them. */
+export function addedByLabel(task) {
+  if (task?.addedBy === "cleaner") return "Added by cleaner";
+  if (task?.addedBy === "customer") return "Added by customer";
+  return "";
+}
+
 function cloneSeed(now) {
   return buildSeed(now);
 }
@@ -305,8 +312,10 @@ export function createDemoRepository(options = {}) {
     async saveTask(homeId, input) {
       const home = homeById(homeId);
       const account = currentAccount();
-      if (!canAccess(home) || account.role !== "customer") {
-        return { ok: false, error: "Only the customer can change the schedule." };
+      if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
+      // Either linked person can add a task. Changing one that already exists stays with the customer.
+      if (input?.taskId && account.role !== "customer") {
+        return { ok: false, error: "Only the customer can change an existing task." };
       }
       const name = String(input?.name || "").trim().slice(0, NAME_LIMIT);
       if (!name) return { ok: false, error: "Give the task a name." };
@@ -343,7 +352,13 @@ export function createDemoRepository(options = {}) {
         return { ok: true, taskId: found.task.id };
       }
 
-      const task = { id: createId("task"), name, frequency, completions: [] };
+      const task = {
+        id: createId("task"),
+        name,
+        frequency,
+        completions: [],
+        addedBy: account.role === "cleaner" ? "cleaner" : "customer",
+      };
       room.tasks.push(task);
       persist();
       return { ok: true, taskId: task.id };
