@@ -23,6 +23,8 @@ const repo = createDemoRepository();
 const ui = {
   sheet: null,
   confirmReset: false,
+  pendingDelete: null,
+  menu: null,
   toast: null,
   linkError: "",
   link: emptyLink(),
@@ -138,6 +140,10 @@ function chevron() {
 
 function backIcon() {
   return `<svg class="icon-back" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function moreIcon() {
+  return `<svg class="icon-more" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></svg>`;
 }
 
 function visibleHome(state) {
@@ -329,17 +335,31 @@ function addTaskButton(home) {
   return `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}">Add a task</button></div>`;
 }
 
-function taskActions(home, task, now, { edit }) {
+function menuOpenFor(home, task) {
+  return ui.menu?.homeId === home.id && ui.menu?.taskId === task.id;
+}
+
+function taskMenu(home, task) {
+  const open = menuOpenFor(home, task);
+  const menuId = `menu-${task.id}`;
+  const pop = open
+    ? `<div class="menu-pop" id="${esc(menuId)}" role="menu">
+        <button type="button" class="menu-item" role="menuitem" data-action="edit-task" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Edit</button>
+        <button type="button" class="menu-item menu-delete" role="menuitem" data-action="ask-delete" data-home="${esc(home.id)}" data-task="${esc(task.id)}">Delete</button>
+      </div>`
+    : "";
+  return `<div class="task-menu">
+    <button type="button" class="menu-toggle" data-action="toggle-menu" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="Options for ${esc(task.name)}" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}"${open ? ` aria-controls="${esc(menuId)}"` : ""}>${moreIcon()}</button>
+  </div>${pop}`;
+}
+
+function taskActions(home, task, now) {
   const todayDone = doneToday(task, now);
   const verb = todayDone ? "Undo" : "Mark done";
   const action = todayDone ? "undo" : "done";
   const style = todayDone ? "ghost" : "primary";
-  const editButton = edit
-    ? `<button type="button" class="btn ghost" data-action="edit-task" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="Edit: ${esc(task.name)}">Edit</button>`
-    : "";
   return `<div class="task-actions">
     <button type="button" class="btn ${style}" data-action="${action}" data-home="${esc(home.id)}" data-task="${esc(task.id)}" aria-label="${esc(verb)}: ${esc(task.name)}">${verb}</button>
-    ${editButton}
   </div>`;
 }
 
@@ -361,15 +381,18 @@ function renderCustomerTasks(home, account, rows, now) {
       const tasks = roomRows
         .map(({ task, status }) => {
           return `<article class="task" id="task-${esc(task.id)}">
-            <div>
-              <h3>${esc(task.name)}</h3>
+            <div class="task-body">
+              <div class="task-head">
+                <h3>${esc(task.name)}</h3>
+                ${taskMenu(home, task)}
+              </div>
               <p class="freq">${esc(formatFrequency(task.frequency))}</p>
               <p><span class="pill ${esc(status.state)}">${esc(status.label)}</span></p>
               <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
               <p class="meta">${esc(lastDoneText(task, account, now))}</p>
               ${addedByMarkup(task)}
             </div>
-            ${taskActions(home, task, now, { edit: true })}
+            ${taskActions(home, task, now)}
           </article>`;
         })
         .join("");
@@ -397,14 +420,17 @@ function renderCleanerTasks(home, account, rows, now) {
         ? items
             .map(({ room, task, status }) => {
               return `<article class="task" id="task-${esc(task.id)}">
-                <div>
-                  <h3>${esc(task.name)}</h3>
+                <div class="task-body">
+                  <div class="task-head">
+                    <h3>${esc(task.name)}</h3>
+                    ${taskMenu(home, task)}
+                  </div>
                   <p class="freq">${esc(room.name)} · ${esc(formatFrequency(task.frequency))}</p>
                   <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
                   <p class="meta">${esc(lastDoneText(task, account, now))}</p>
                   ${addedByMarkup(task)}
                 </div>
-                ${taskActions(home, task, now, { edit: false })}
+                ${taskActions(home, task, now)}
               </article>`;
             })
             .join("")
@@ -462,7 +488,7 @@ function renderToast() {
 
 function renderModal() {
   if (ui.confirmReset) return renderResetDialog();
-  if (ui.sheet?.confirmDelete) return renderDeleteDialog();
+  if (ui.pendingDelete) return renderDeleteDialog();
   if (ui.sheet) return renderTaskSheet();
   return "";
 }
@@ -483,16 +509,16 @@ function renderResetDialog() {
 }
 
 function renderDeleteDialog() {
-  const name = ui.sheet.name || "this task";
+  const name = ui.pendingDelete?.name || "this task";
   return `<div class="backdrop center">
-    <div class="sheet dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <div class="sheet dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-copy">
       <div class="sheet-body">
-        <h2 id="delete-title">Delete this task?</h2>
-        <p>${esc(name)} will come off the schedule for this home.</p>
+        <h2 id="delete-title">Delete "${esc(name)}"?</h2>
+        <p id="delete-copy">This can't be undone.</p>
       </div>
       <div class="sheet-actions">
-        <button type="button" class="btn danger" data-action="confirm-delete">Delete task</button>
-        <button type="button" class="btn ghost" data-action="cancel-delete">Keep it</button>
+        <button type="button" class="btn ghost" id="cancel-delete" data-action="cancel-delete">Cancel</button>
+        <button type="button" class="btn danger" data-action="confirm-delete">Delete</button>
       </div>
     </div>
   </div>`;
@@ -531,9 +557,6 @@ function renderTaskSheet() {
     .map((item) => `<option value="${item}"${sheet.unit === item ? " selected" : ""}>${item}</option>`)
     .join("");
   const error = sheet.error ? `<p class="form-error" role="alert">${esc(sheet.error)}</p>` : "";
-  const remove = sheet.mode === "edit"
-    ? `<button type="button" class="btn danger" data-action="ask-delete">Delete task</button>`
-    : "";
   return `<div class="backdrop">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="task-title">
       <form id="task-form" novalidate>
@@ -560,7 +583,6 @@ function renderTaskSheet() {
         <div class="sheet-actions">
           <button type="submit" class="btn primary">Save task</button>
           <button type="button" class="btn ghost" data-action="close-sheet">Cancel</button>
-          ${remove}
         </div>
       </form>
     </div>
@@ -572,7 +594,7 @@ function render(options = {}) {
   const state = repo.getState();
   const y = options.scroll === "top" ? 0 : window.scrollY;
   root.innerHTML = `${renderDemo(state)}${renderHeader(state)}${renderMain(state)}${renderToast()}${renderModal()}`;
-  document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.confirmReset));
+  document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.confirmReset || ui.pendingDelete));
   if (options.scroll === "top") window.scrollTo(0, 0);
   else window.scrollTo(0, y);
   if (ui.scrollToId) {
@@ -595,10 +617,21 @@ function showToast(toast, options = {}) {
 function clearTransient() {
   ui.sheet = null;
   ui.confirmReset = false;
+  ui.pendingDelete = null;
+  ui.menu = null;
   ui.toast = null;
   ui.linkError = "";
   ui.notes = {};
   clearTimeout(toastTimer);
+}
+
+function findTaskInHome(homeId, taskId) {
+  const home = repo.homeById(homeId);
+  for (const room of home?.rooms || []) {
+    const task = room.tasks.find((item) => item.id === taskId);
+    if (task) return { home, room, task };
+  }
+  return null;
 }
 
 function readLinkForm() {
@@ -615,6 +648,8 @@ function readLinkForm() {
 }
 
 function openTaskSheet({ homeId, task = null, roomId = "" }) {
+  ui.menu = null;
+  ui.pendingDelete = null;
   if (task) {
     const preset = presetForFrequency(task.frequency);
     ui.sheet = {
@@ -628,7 +663,6 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       every: task.frequency?.every ? String(task.frequency.every) : "2",
       unit: ["days", "weeks", "months"].includes(task.frequency?.unit) ? task.frequency.unit : "weeks",
       error: "",
-      confirmDelete: false,
     };
   } else {
     ui.sheet = {
@@ -642,7 +676,6 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       every: "2",
       unit: "weeks",
       error: "",
-      confirmDelete: false,
     };
   }
   render({ focus: "task-name" });
@@ -673,20 +706,42 @@ async function copyText(text) {
 
 async function handleClick(event) {
   const button = event.target.closest("[data-action]");
+  const insideMenu = Boolean(event.target.closest(".task-menu, .menu-pop"));
   if (event.target.classList?.contains("backdrop")) {
     ui.sheet = null;
     ui.confirmReset = false;
+    ui.pendingDelete = null;
+    ui.menu = null;
     render();
     return;
+  }
+  // A tap outside the menu only closes it. That includes Mark done, so opening
+  // the menu cannot tick the task off by accident.
+  if (ui.menu && !insideMenu) {
+    ui.menu = null;
+    const action = button?.dataset.action;
+    const tick = action === "done" || action === "undo";
+    if (!button || tick) {
+      render();
+      return;
+    }
   }
   if (!button) return;
   const action = button.dataset.action;
   const homeId = button.dataset.home || repo.getState().view.homeId;
   const taskId = button.dataset.task || "";
 
+  if (action === "toggle-menu") {
+    const same = ui.menu && ui.menu.homeId === homeId && ui.menu.taskId === taskId;
+    ui.menu = same ? null : { homeId, taskId };
+    render();
+    return;
+  }
   if (action === "ask-reset") {
     ui.confirmReset = true;
     ui.sheet = null;
+    ui.menu = null;
+    ui.pendingDelete = null;
     render();
     return;
   }
@@ -782,13 +837,12 @@ async function handleClick(event) {
     return;
   }
   if (action === "edit-task") {
-    const home = repo.homeById(homeId);
-    let found = null;
-    for (const room of home?.rooms || []) {
-      const task = room.tasks.find((item) => item.id === taskId);
-      if (task) found = { room, task };
+    ui.menu = null;
+    const found = findTaskInHome(homeId, taskId);
+    if (!found) {
+      render();
+      return;
     }
-    if (!found) return;
     openTaskSheet({ homeId, task: found.task, roomId: found.room.id });
     return;
   }
@@ -798,21 +852,27 @@ async function handleClick(event) {
     return;
   }
   if (action === "ask-delete") {
-    if (!ui.sheet) return;
-    ui.sheet.confirmDelete = true;
-    ui.sheet.name = document.getElementById("task-name")?.value || ui.sheet.name;
-    render();
+    ui.menu = null;
+    const found = findTaskInHome(homeId, taskId);
+    if (!found) {
+      render();
+      return;
+    }
+    ui.sheet = null;
+    ui.pendingDelete = { homeId, taskId: found.task.id, name: found.task.name };
+    render({ focus: "cancel-delete" });
     return;
   }
   if (action === "cancel-delete") {
-    if (ui.sheet) ui.sheet.confirmDelete = false;
-    render({ focus: "task-name" });
+    ui.pendingDelete = null;
+    render();
     return;
   }
   if (action === "confirm-delete") {
-    if (!ui.sheet) return;
-    const result = await repo.deleteTask(ui.sheet.homeId, ui.sheet.taskId);
-    ui.sheet = null;
+    if (!ui.pendingDelete) return;
+    const target = ui.pendingDelete;
+    ui.pendingDelete = null;
+    const result = await repo.deleteTask(target.homeId, target.taskId);
     if (!result.ok) {
       showToast({ message: result.error || "Couldn't delete that task." });
       return;
@@ -866,7 +926,6 @@ async function handleSubmit(event) {
         every: String(data.get("every") || "2"),
         unit: String(data.get("unit") || "weeks"),
         error: result.error,
-        confirmDelete: false,
       };
       render({ focus: "task-name" });
       return;
@@ -935,9 +994,11 @@ function bind() {
   document.addEventListener("input", handleInput);
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
-    if (!ui.sheet && !ui.confirmReset) return;
+    if (!ui.sheet && !ui.confirmReset && !ui.pendingDelete && !ui.menu) return;
     ui.sheet = null;
     ui.confirmReset = false;
+    ui.pendingDelete = null;
+    ui.menu = null;
     render();
   });
 }

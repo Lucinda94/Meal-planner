@@ -361,9 +361,13 @@ main {
 }
 
 .btn.danger {
-  background: transparent;
-  color: var(--due);
-  border: 1.5px solid #f0c2b8;
+  background: var(--due);
+  color: white;
+  border: 0;
+}
+
+.btn.danger:active {
+  background: #6e2416;
 }
 
 .btn:active {
@@ -553,16 +557,93 @@ main {
 }
 
 .task {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  padding: 8px 0 12px;
   box-shadow: none;
   border-radius: 0;
   background: transparent;
   border-top: 1px solid var(--line);
   scroll-margin-top: 210px;
+}
+
+.task-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-head h3 {
+  flex: 1;
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.task-menu {
+  flex: none;
+}
+
+.menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.menu-toggle[aria-expanded="true"],
+.menu-toggle:active {
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+
+.icon-more {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.menu-pop {
+  flex: 1 0 100%;
+  margin: 0;
+  padding: 6px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--ink);
+}
+
+.menu-item:active {
+  background: var(--bg);
+}
+
+@media (hover: hover) {
+  .menu-item:hover {
+    background: var(--bg);
+  }
+}
+
+.menu-delete {
+  color: var(--due);
 }
 
 .room .task:first-of-type,
@@ -600,12 +681,13 @@ main {
 
 .task-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 8px;
 }
 
 .task-actions .btn {
-  min-width: 112px;
+  min-width: 148px;
+  flex: none;
 }
 
 .empty {
@@ -700,6 +782,10 @@ legend {
   border-radius: 22px;
 }
 
+.sheet.dialog h2 {
+  overflow-wrap: anywhere;
+}
+
 .sheet form {
   display: flex;
   flex-direction: column;
@@ -746,16 +832,9 @@ legend {
 }
 
 @media (max-width: 360px) {
-  .task {
-    grid-template-columns: 1fr;
-  }
-
-  .task-actions {
-    flex-direction: row;
-  }
-
   .task-actions .btn {
     flex: 1;
+    min-width: 0;
   }
 }
 

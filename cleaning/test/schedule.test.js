@@ -154,17 +154,11 @@ test("editing how often moves a task back onto the due list", async () => {
   assert.equal(stateOf(repo.getState(), created.taskId), "due");
   assert.ok(repo.getState().homes[0].rooms.some((room) => room.name === "Utility"));
 
-  const cleanerEdit = await repo.setAccount("acct_priya").then(() =>
-    repo.saveTask("home_helen", {
-      taskId: "task_helen_oven",
-      roomId: "room_helen_kitchen",
-      name: "Should fail",
-      frequency: { unit: "visit" },
-    }),
-  );
-  assert.equal(cleanerEdit.ok, false);
-  assert.equal(taskById(repo.getState(), "task_helen_oven").task.name, "Clean the oven");
-  assert.equal(formatFrequency(taskById(repo.getState(), "task_helen_oven").task.frequency), "Every week");
+  await repo.setAccount("acct_priya");
+  const seenByCleaner = taskById(repo.getState(), "task_helen_oven").task;
+  assert.equal(seenByCleaner.name, "Clean the oven");
+  assert.equal(formatFrequency(seenByCleaner.frequency), "Every week");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
 });
 
 test("cleaner and customer can each add a task the other person sees", async () => {
@@ -191,18 +185,6 @@ test("cleaner and customer can each add a task the other person sees", async () 
   assert.equal(addedByLabel(cleanerTask.task), "Added by cleaner");
   assert.equal(formatFrequency(cleanerTask.task.frequency), "Every 2 weeks");
   assert.equal(stateOf(repo.getState(), byCleaner.taskId), "due");
-
-  const blockedEdit = await repo.saveTask("home_helen", {
-    taskId: byCleaner.taskId,
-    roomId: "room_helen_kitchen",
-    name: "Priya should not rename this",
-    frequency: { unit: "visit" },
-  });
-  assert.equal(blockedEdit.ok, false);
-  assert.equal(taskById(repo.getState(), byCleaner.taskId).task.name, "Wipe the skirting boards");
-
-  const blockedDelete = await repo.deleteTask("home_helen", byCleaner.taskId);
-  assert.equal(blockedDelete.ok, false);
 
   const otherHome = await repo.saveTask("home_james", {
     roomId: "room_james_kitchen",
@@ -257,6 +239,137 @@ test("cleaner and customer can each add a task the other person sees", async () 
   for (const task of raw.homes[0].rooms.find((room) => room.id === "room_helen_kitchen").tasks) {
     if (task.id.startsWith("task_helen_")) assert.equal(task.addedBy, undefined);
   }
+});
+
+test("either person can edit or delete a task, and the other person sees it", async () => {
+  const storage = memoryStorage();
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+
+  const original = taskById(repo.getState(), "task_helen_oven").task;
+  assert.equal(original.addedBy, undefined);
+  const completions = original.completions.length;
+  const note = repo.getState().homes[0].customerNote;
+
+  await repo.setAccount("acct_priya");
+  const renamed = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_bathroom",
+    name: "Clean the oven and trays",
+    frequency: { unit: "weeks", every: 2 },
+  });
+  assert.equal(renamed.ok, true);
+  let oven = taskById(repo.getState(), "task_helen_oven");
+  assert.equal(oven.room.name, "Bathroom");
+  assert.equal(oven.task.name, "Clean the oven and trays");
+  assert.equal(formatFrequency(oven.task.frequency), "Every 2 weeks");
+  assert.equal(oven.task.addedBy, undefined);
+  assert.equal(oven.task.completions.length, completions);
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "soon");
+  assert.equal(repo.getState().homes[0].customerNote, note);
+
+  const blank = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_bathroom",
+    name: "   ",
+    frequency: { unit: "visit" },
+  });
+  assert.equal(blank.ok, false);
+  assert.equal(taskById(repo.getState(), "task_helen_oven").task.name, "Clean the oven and trays");
+
+  await repo.setAccount("acct_helen");
+  const seen = taskById(repo.getState(), "task_helen_oven");
+  assert.equal(seen.room.name, "Bathroom");
+  assert.equal(seen.task.name, "Clean the oven and trays");
+  assert.equal(formatFrequency(seen.task.frequency), "Every 2 weeks");
+
+  const moved = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "__new",
+    newRoomName: "Utility",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+  });
+  assert.equal(moved.ok, true);
+  assert.equal(taskById(repo.getState(), "task_helen_oven").room.name, "Utility");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "later");
+
+  const foreignEdit = await repo.saveTask("home_james", {
+    taskId: "task_james_oven",
+    roomId: "room_james_kitchen",
+    name: "Helen should not change this",
+    frequency: { unit: "visit" },
+  });
+  assert.equal(foreignEdit.ok, false);
+  const foreignDelete = await repo.deleteTask("home_james", "task_james_oven");
+  assert.equal(foreignDelete.ok, false);
+  assert.equal(taskById(repo.getState(), "task_james_oven").task.name, "Clean the oven");
+
+  const removed = await repo.deleteTask("home_helen", "task_helen_oven");
+  assert.equal(removed.ok, true);
+  assert.equal(taskById(repo.getState(), "task_helen_oven"), null);
+  assert.equal(repo.getState().homes[0].rooms.some((room) => room.name === "Utility"), false);
+  assert.ok(taskById(repo.getState(), "task_helen_worktops"));
+
+  const missing = await repo.deleteTask("home_helen", "task_does_not_exist");
+  assert.equal(missing.ok, false);
+
+  await repo.setAccount("acct_priya");
+  assert.equal(taskById(repo.getState(), "task_helen_oven"), null);
+  const byCleaner = await repo.deleteTask("home_helen", "task_helen_hall");
+  assert.equal(byCleaner.ok, true);
+  assert.equal(repo.getState().homes[0].rooms.some((room) => room.name === "Hall"), false);
+
+  await repo.setAccount("acct_helen");
+  assert.equal(taskById(repo.getState(), "task_helen_hall"), null);
+  assert.ok(taskById(repo.getState(), "task_helen_worktops"));
+  assert.equal(repo.getState().homes[0].customerNote, note);
+
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(raw.version, 1);
+});
+
+test("tasks saved before anyone recorded who added them can still be edited and deleted", async () => {
+  const storage = memoryStorage();
+  const seed = createDemoRepository({ storage, now: () => tuesday });
+  await seed.load();
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  for (const home of raw.homes) {
+    for (const room of home.rooms) {
+      for (const task of room.tasks) delete task.addedBy;
+    }
+  }
+  storage.setItem(STORAGE_KEY, JSON.stringify(raw));
+
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  assert.equal(repo.getState().version, 1);
+  assert.equal(taskById(repo.getState(), "task_amina_oven").task.addedBy, undefined);
+  assert.equal(addedByLabel(taskById(repo.getState(), "task_amina_oven").task), "");
+
+  await repo.setAccount("acct_priya");
+  const saved = await repo.saveTask("home_amina", {
+    taskId: "task_amina_oven",
+    roomId: "room_amina_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 1 },
+  });
+  assert.equal(saved.ok, true);
+  const oven = taskById(repo.getState(), "task_amina_oven").task;
+  assert.equal(oven.name, "Clean the oven");
+  assert.equal(formatFrequency(oven.frequency), "Every month");
+  assert.equal(oven.addedBy, undefined);
+  assert.equal(stateOf(repo.getState(), "task_amina_oven"), "due");
+
+  await repo.setAccount("acct_amina");
+  assert.equal(taskById(repo.getState(), "task_amina_oven").task.name, "Clean the oven");
+  const deleted = await repo.deleteTask("home_amina", "task_amina_windows");
+  assert.equal(deleted.ok, true);
+  assert.equal(taskById(repo.getState(), "task_amina_windows"), null);
+
+  await repo.setAccount("acct_priya");
+  assert.equal(taskById(repo.getState(), "task_amina_windows"), null);
+  assert.ok(taskById(repo.getState(), "task_amina_dust"));
 });
 
 test("notes only save for the person who writes them", async () => {
