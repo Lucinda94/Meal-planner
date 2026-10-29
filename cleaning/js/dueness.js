@@ -1,4 +1,4 @@
-import { addDays, addMonths, formatDate, isSameDay, nextVisitOnOrAfter, startOfDay } from "./dates.js";
+import { addDays, addMonths, formatUkDate, isSameDay, nextVisitOnOrAfter, startOfDay } from "./dates.js";
 
 export const SOON_DAYS = 14;
 
@@ -100,19 +100,19 @@ export function taskStatus(task, { today, visitWeekday }) {
   const dueOn = dueOnDate(task, today);
   if (dueOn.getTime() <= upcoming.getTime()) {
     if (dueOn.getTime() < startOfDay(today).getTime()) {
-      return { state: "due", label: "Due", detail: `Overdue · was due ${formatDate(dueOn)}`, dueOn };
+      return { state: "due", label: "Due", detail: `Overdue · was due ${formatUkDate(dueOn)}`, dueOn };
     }
     if (isSameDay(dueOn, today)) {
       return { state: "due", label: "Due", detail: "Due today", dueOn };
     }
-    return { state: "due", label: "Due", detail: `Due this visit · ${formatDate(dueOn)}`, dueOn };
+    return { state: "due", label: "Due", detail: `Due this visit · ${formatUkDate(dueOn)}`, dueOn };
   }
 
   const soonLimit = addDays(startOfDay(today), SOON_DAYS);
   if (dueOn.getTime() <= soonLimit.getTime()) {
-    return { state: "soon", label: "Due soon", detail: `Due ${formatDate(dueOn)}`, dueOn };
+    return { state: "soon", label: "Due soon", detail: `Due ${formatUkDate(dueOn)}`, dueOn };
   }
-  return { state: "later", label: "Not needed yet", detail: `Next due ${formatDate(dueOn)}`, dueOn };
+  return { state: "later", label: "Not needed yet", detail: `Next due ${formatUkDate(dueOn)}`, dueOn };
 }
 
 export function tasksWithStatus(home, today) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addMonths, nextVisitOnOrAfter } from "../js/dates.js";
+import { addMonths, formatUkDate, nextVisitOnOrAfter, parseDateInput, toDateInputValue } from "../js/dates.js";
 import { buildSeed } from "../js/demo-data.js";
 import { formatFrequency, latestCompletion, taskStatus, tasksWithStatus } from "../js/dueness.js";
 import { STORAGE_KEY } from "../js/config.js";
@@ -18,10 +18,14 @@ function taskById(state, id) {
   return null;
 }
 
-function stateOf(state, id, now = tuesday) {
+function statusOf(state, id, now = tuesday) {
   const found = taskById(state, id);
   assert.ok(found, id);
-  return taskStatus(found.task, { today: now, visitWeekday: found.home.visitWeekday }).state;
+  return taskStatus(found.task, { today: now, visitWeekday: found.home.visitWeekday });
+}
+
+function stateOf(state, id, now = tuesday) {
+  return statusOf(state, id, now).state;
 }
 
 test("month maths clamps to the end of a short month", () => {
@@ -327,6 +331,268 @@ test("either person can edit or delete a task, and the other person sees it", as
 
   const raw = JSON.parse(storage.getItem(STORAGE_KEY));
   assert.equal(raw.version, 1);
+});
+
+test("dates for people are shown as day, month and year", () => {
+  assert.equal(formatUkDate(new Date(2026, 9, 12, 18, 30)), "12 Oct 2026");
+  assert.equal(toDateInputValue(new Date(2026, 9, 12, 23, 30)), "2026-10-12");
+  const parsed = parseDateInput("2026-10-12");
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.date.getFullYear(), 2026);
+  assert.equal(parsed.date.getMonth(), 9);
+  assert.equal(parsed.date.getDate(), 12);
+  assert.equal(parsed.date.getHours(), 12);
+  assert.equal(parseDateInput("").ok, true);
+  assert.equal(parseDateInput("").date, null);
+  assert.equal(parseDateInput("12/10/2026").ok, false);
+  assert.equal(parseDateInput("2026-02-31").ok, false);
+
+  const state = buildSeed(tuesday);
+  assert.equal(statusOf(state, "task_helen_oven").detail, "Next due 15 Jan 2027");
+  assert.equal(statusOf(state, "task_helen_extractor").detail, "Overdue · was due 17 Oct 2026");
+  assert.equal(statusOf(state, "task_helen_bedding").detail, "Due 6 Nov 2026");
+});
+
+test("either person can set when a task was last done, and the due date updates", async () => {
+  const storage = memoryStorage();
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  await repo.setAccount("acct_helen");
+
+  const ovenBefore = taskById(repo.getState(), "task_helen_oven").task;
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "later");
+  assert.equal(statusOf(repo.getState(), "task_helen_oven").detail, "Next due 15 Jan 2027");
+  const originalAt = latestCompletion(ovenBefore).at;
+  const originalCount = ovenBefore.completions.length;
+
+  const sameDay = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+    lastDone: new Date(originalAt),
+  });
+  assert.equal(sameDay.ok, true);
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_oven").task).at, originalAt);
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_oven").task).accountId, "acct_helen");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_oven").task).name, "Helen Cartwright");
+  assert.equal(taskById(repo.getState(), "task_helen_oven").task.completions.length, originalCount);
+
+  const moved = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+    lastDone: new Date(2026, 5, 1, 9),
+  });
+  assert.equal(moved.ok, true);
+  const movedTask = taskById(repo.getState(), "task_helen_oven").task;
+  assert.equal(latestCompletion(movedTask).accountId, "acct_helen");
+  assert.equal(latestCompletion(movedTask).name, "Helen Cartwright");
+  assert.equal(new Date(latestCompletion(movedTask).at).getMonth(), 5);
+  assert.equal(new Date(latestCompletion(movedTask).at).getDate(), 1);
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
+  assert.equal(statusOf(repo.getState(), "task_helen_oven").detail, "Overdue · was due 1 Sep 2026");
+
+  await repo.setAccount("acct_priya");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
+  assert.equal(statusOf(repo.getState(), "task_helen_oven").detail, "Overdue · was due 1 Sep 2026");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_oven").task).name, "Helen Cartwright");
+
+  const cleared = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+    lastDone: null,
+  });
+  assert.equal(cleared.ok, true);
+  assert.equal(taskById(repo.getState(), "task_helen_oven").task.completions.length, 0);
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
+  assert.equal(statusOf(repo.getState(), "task_helen_oven").detail, "Due today");
+
+  await repo.setAccount("acct_helen");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_oven").task), null);
+
+  const kept = taskById(repo.getState(), "task_helen_windows").task;
+  const keptAt = latestCompletion(kept).at;
+  const untouched = await repo.saveTask("home_helen", {
+    taskId: "task_helen_windows",
+    roomId: "room_helen_living",
+    name: "Clean the inside of the windows",
+    frequency: { unit: "months", every: 1 },
+  });
+  assert.equal(untouched.ok, true);
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_windows").task).at, keptAt);
+
+  const future = await repo.saveTask("home_helen", {
+    taskId: "task_helen_windows",
+    roomId: "room_helen_living",
+    name: "This name should not be saved",
+    frequency: { unit: "weeks", every: 1 },
+    lastDone: new Date(2026, 9, 28, 12),
+  });
+  assert.equal(future.ok, false);
+  assert.match(future.error, /earlier/);
+  assert.equal(taskById(repo.getState(), "task_helen_windows").task.name, "Clean the inside of the windows");
+  assert.equal(formatFrequency(taskById(repo.getState(), "task_helen_windows").task.frequency), "Every month");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_windows").task).at, keptAt);
+
+  const invalid = await repo.saveTask("home_helen", {
+    taskId: "task_helen_windows",
+    roomId: "room_helen_living",
+    name: "Clean the inside of the windows",
+    frequency: { unit: "months", every: 1 },
+    lastDone: new Date("not a date"),
+  });
+  assert.equal(invalid.ok, false);
+  const asText = await repo.saveTask("home_helen", {
+    taskId: "task_helen_windows",
+    roomId: "room_helen_living",
+    name: "Clean the inside of the windows",
+    frequency: { unit: "months", every: 1 },
+    lastDone: "2026-06-01",
+  });
+  assert.equal(asText.ok, false);
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_helen_windows").task).at, keptAt);
+
+  const added = await repo.saveTask("home_helen", {
+    roomId: "room_helen_kitchen",
+    name: "Descale the kettle",
+    frequency: { unit: "months", every: 3 },
+    lastDone: new Date(2026, 9, 1, 12),
+  });
+  assert.equal(added.ok, true);
+  assert.equal(taskById(repo.getState(), added.taskId).task.addedBy, "customer");
+  assert.equal(latestCompletion(taskById(repo.getState(), added.taskId).task).role, "customer");
+  assert.equal(stateOf(repo.getState(), added.taskId), "later");
+  assert.equal(statusOf(repo.getState(), added.taskId).detail, "Next due 1 Jan 2027");
+
+  const never = await repo.saveTask("home_helen", {
+    roomId: "__new",
+    newRoomName: "Utility",
+    name: "Clean the utility floor",
+    frequency: { unit: "weeks", every: 2 },
+    lastDone: null,
+  });
+  assert.equal(never.ok, true);
+  assert.equal(taskById(repo.getState(), never.taskId).task.completions.length, 0);
+  assert.equal(stateOf(repo.getState(), never.taskId), "due");
+
+  const blocked = await repo.saveTask("home_james", {
+    taskId: "task_james_oven",
+    roomId: "room_james_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+    lastDone: new Date(2026, 5, 1, 12),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(stateOf(repo.getState(), "task_james_oven"), "later");
+
+  await repo.setAccount("acct_priya");
+  assert.equal(statusOf(repo.getState(), added.taskId).detail, "Next due 1 Jan 2027");
+  assert.equal(stateOf(repo.getState(), never.taskId), "due");
+
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(raw.version, 1);
+  const savedOven = raw.homes[0].rooms
+    .flatMap((room) => room.tasks)
+    .find((task) => task.id === "task_helen_oven");
+  assert.deepEqual(savedOven.completions, []);
+  assert.equal(savedOven.addedBy, undefined);
+});
+
+test("tasks saved before last-done editing still accept a new date", async () => {
+  const storage = memoryStorage();
+  const seed = createDemoRepository({ storage, now: () => tuesday });
+  await seed.load();
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  for (const home of raw.homes) {
+    for (const room of home.rooms) {
+      for (const task of room.tasks) delete task.addedBy;
+    }
+  }
+  storage.setItem(STORAGE_KEY, JSON.stringify(raw));
+
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  assert.equal(repo.getState().version, 1);
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "later");
+
+  await repo.setAccount("acct_priya");
+  const saved = await repo.saveTask("home_helen", {
+    taskId: "task_helen_oven",
+    roomId: "room_helen_kitchen",
+    name: "Clean the oven",
+    frequency: { unit: "months", every: 3 },
+    lastDone: new Date(2026, 5, 1, 12),
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(taskById(repo.getState(), "task_helen_oven").task.addedBy, undefined);
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "due");
+  assert.equal(statusOf(repo.getState(), "task_helen_oven").detail, "Overdue · was due 1 Sep 2026");
+
+  const again = createDemoRepository({ storage, now: () => tuesday });
+  await again.load();
+  assert.equal(again.getState().version, 1);
+  assert.equal(statusOf(again.getState(), "task_helen_oven").detail, "Overdue · was due 1 Sep 2026");
+  await again.setAccount("acct_helen");
+  assert.equal(stateOf(again.getState(), "task_helen_oven"), "due");
+});
+
+test("marking a task done on an earlier day updates the due date for both people", async () => {
+  const repo = createDemoRepository({ storage: memoryStorage(), now: () => tuesday });
+  await repo.load();
+  await repo.setAccount("acct_priya");
+  assert.equal(stateOf(repo.getState(), "task_amina_oven"), "due");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_amina_oven").task), null);
+
+  const todayTick = await repo.markDone("home_amina", "task_amina_oven");
+  assert.equal(todayTick.ok, true);
+  assert.equal(stateOf(repo.getState(), "task_amina_oven"), "later");
+  assert.equal(statusOf(repo.getState(), "task_amina_oven").detail, "Next due 27 Jan 2027");
+
+  const corrected = await repo.markDone("home_amina", "task_amina_oven", new Date(2026, 5, 1, 15));
+  assert.equal(corrected.ok, true);
+  assert.equal(corrected.completion.role, "cleaner");
+  assert.equal(corrected.completion.name, "Priya Adeyemi");
+  const oven = taskById(repo.getState(), "task_amina_oven").task;
+  assert.equal(oven.completions.length, 1);
+  assert.equal(new Date(latestCompletion(oven).at).getMonth(), 5);
+  assert.equal(stateOf(repo.getState(), "task_amina_oven"), "due");
+  assert.equal(statusOf(repo.getState(), "task_amina_oven").detail, "Overdue · was due 1 Sep 2026");
+  const undone = await repo.undoToday("home_amina", "task_amina_oven");
+  assert.equal(undone.ok, false);
+  assert.equal(stateOf(repo.getState(), "task_amina_oven"), "due");
+
+  const future = await repo.markDone("home_amina", "task_amina_oven", new Date(2026, 9, 28, 12));
+  assert.equal(future.ok, false);
+  assert.match(future.error, /earlier/);
+  assert.equal(oven.completions.length, 1);
+  const missing = await repo.markDone("home_amina", "task_amina_oven", null);
+  assert.equal(missing.ok, false);
+
+  await repo.setAccount("acct_amina");
+  assert.equal(statusOf(repo.getState(), "task_amina_oven").detail, "Overdue · was due 1 Sep 2026");
+  const byCustomer = await repo.markDone("home_amina", "task_amina_windows", new Date(2026, 7, 1, 12));
+  assert.equal(byCustomer.ok, true);
+  assert.equal(byCustomer.completion.role, "customer");
+  assert.equal(stateOf(repo.getState(), "task_amina_windows"), "due");
+  assert.equal(statusOf(repo.getState(), "task_amina_windows").detail, "Overdue · was due 1 Sep 2026");
+
+  const visit = await repo.markDone("home_amina", "task_amina_dust", new Date(2026, 9, 20, 12));
+  assert.equal(visit.ok, true);
+  assert.equal(stateOf(repo.getState(), "task_amina_dust"), "due");
+
+  const foreign = await repo.markDone("home_helen", "task_helen_oven", new Date(2026, 5, 1, 12));
+  assert.equal(foreign.ok, false);
+
+  await repo.setAccount("acct_priya");
+  assert.equal(statusOf(repo.getState(), "task_amina_windows").detail, "Overdue · was due 1 Sep 2026");
+  assert.equal(latestCompletion(taskById(repo.getState(), "task_amina_windows").task).name, "Amina Rahman");
+  assert.equal(stateOf(repo.getState(), "task_amina_dust"), "due");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "later");
 });
 
 test("tasks saved before anyone recorded who added them can still be edited and deleted", async () => {
