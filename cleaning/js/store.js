@@ -268,6 +268,20 @@ export function createDemoRepository(options = {}) {
       return { ok: true };
     },
 
+    /**
+     * Change the name shown for the account currently being viewed.
+     * Tasks already marked done keep the name they were saved with.
+     */
+    async setDisplayName(name) {
+      const account = currentAccount();
+      if (!account) return { ok: false, error: "Choose who you're viewing as first." };
+      const next = String(name ?? "").trim().slice(0, NAME_LIMIT);
+      if (!next) return { ok: false, error: "Add a name." };
+      account.name = next;
+      persist();
+      return { ok: true, name: next };
+    },
+
     async openHome(homeId) {
       const home = homeById(homeId);
       if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };

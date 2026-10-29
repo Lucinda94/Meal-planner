@@ -695,6 +695,51 @@ test("a matching invite code links a new home the cleaner can see", async () => 
   assert.equal(repo.visibleHomes()[0].id, "home_helen");
 });
 
+test("the display name can be edited and stays in this browser", async () => {
+  const storage = memoryStorage();
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  await repo.setAccount("acct_helen");
+
+  const blank = await repo.setDisplayName("   ");
+  assert.equal(blank.ok, false);
+  assert.match(blank.error, /name/);
+  assert.equal(repo.currentAccount().name, "Helen Cartwright");
+
+  const saved = await repo.setDisplayName("  Helen C.  ");
+  assert.equal(saved.ok, true);
+  assert.equal(saved.name, "Helen C.");
+  assert.equal(repo.currentAccount().name, "Helen C.");
+
+  const marked = await repo.markDone("home_helen", "task_helen_worktops");
+  assert.equal(marked.ok, true);
+  assert.equal(marked.completion.name, "Helen C.");
+  const oven = latestCompletion(taskById(repo.getState(), "task_helen_oven").task);
+  assert.equal(oven.name, "Helen Cartwright");
+
+  await repo.setAccount("acct_priya");
+  assert.equal(repo.getState().accounts.find((account) => account.id === "acct_helen").name, "Helen C.");
+  const renamed = await repo.setDisplayName("Priya A.");
+  assert.equal(renamed.ok, true);
+  assert.equal(repo.currentAccount().inviteCode, "MAPLE-7K");
+  assert.equal(repo.currentAccount().role, "cleaner");
+
+  const again = createDemoRepository({ storage, now: () => tuesday });
+  await again.load();
+  assert.equal(again.getState().accounts.find((account) => account.id === "acct_helen").name, "Helen C.");
+  assert.equal(again.getState().accounts.find((account) => account.id === "acct_priya").name, "Priya A.");
+
+  await again.setAccount("acct_helen");
+  const clipped = await again.setDisplayName("A".repeat(100));
+  assert.equal(clipped.ok, true);
+  assert.equal(again.currentAccount().name.length, 80);
+
+  await again.reset();
+  assert.equal(again.getState().accounts.find((account) => account.id === "acct_helen").name, "Helen Cartwright");
+  assert.equal(again.currentAccount().id, "acct_priya");
+  assert.equal(storage.getItem("meal-planner.v1"), null);
+});
+
 test("reset puts the sample homes back and keeps them on this phone", async () => {
   const storage = memoryStorage();
   const repo = createDemoRepository({ storage, now: () => tuesday });
