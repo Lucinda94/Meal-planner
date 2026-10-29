@@ -18,6 +18,7 @@ import {
   presetForFrequency,
   tasksWithStatus,
 } from "./dueness.js";
+import { MORE_SCREEN, SETTINGS_NOTE, normaliseTab, placeholderTab, profileModel, renderTabBar } from "./nav.js";
 import { addedByLabel, createDemoRepository, firstName, shortAddress } from "./store.js";
 
 const PRESETS = [
@@ -31,6 +32,7 @@ const PRESETS = [
 
 const repo = createDemoRepository();
 const ui = {
+  tab: "dashboard",
   sheet: null,
   doneOn: null,
   confirmReset: false,
@@ -38,6 +40,7 @@ const ui = {
   menu: null,
   toast: null,
   linkError: "",
+  profileError: "",
   link: emptyLink(),
   notes: {},
   scrollToId: "",
@@ -215,7 +218,7 @@ function visibleHome(state) {
   return homes.find((home) => home.id === state.view.homeId) || null;
 }
 
-function renderDemo(state) {
+function renderRoleSwitch(state) {
   const current = repo.currentAccount();
   const options = orderedAccounts(state)
     .map((account) => {
@@ -223,16 +226,17 @@ function renderDemo(state) {
       return `<option value="${esc(account.id)}"${selected}>${esc(optionLabel(state, account))}</option>`;
     })
     .join("");
-  return `<div class="demo">
-    <div class="demo-kicker"><strong>Demo</strong><span>Saved on this phone only</span></div>
-    <label class="demo-label" for="role-switch">Viewing as
+  return `<label class="field" for="role-switch">Viewing as
       <select id="role-switch">${options}</select>
-    </label>
-    <div class="demo-actions">
-      <button type="button" class="btn" data-action="show-link">Link a new home</button>
-      <button type="button" class="btn" data-action="ask-reset">Reset demo data</button>
-    </div>
-  </div>`;
+    </label>`;
+}
+
+function pageHead(title, lede = "") {
+  return `<header class="hero">
+    <div class="brand-row">${logo()}<p class="brand">${esc(APP_NAME)}</p></div>
+    <h1>${esc(title)}</h1>
+    ${lede ? `<p class="lede">${esc(lede)}</p>` : ""}
+  </header>`;
 }
 
 function renderHeader(state) {
@@ -685,11 +689,139 @@ function renderDoneOnSheet() {
   </div>`;
 }
 
+function renderCleanerProfile(model) {
+  const homes = model.homes.length
+    ? model.homes
+        .map(
+          (home) => `<div class="link-row">
+            <p class="home-name">${esc(home.customerName || home.name)}</p>
+            <p class="address">${esc(home.address)}</p>
+          </div>`,
+        )
+        .join("")
+    : `<p class="quiet">No homes linked yet. Share your code and a customer can link theirs.</p>`;
+  return `<section class="panel">
+      <h2>Invite code</h2>
+      <p class="code" id="invite-code">${esc(model.inviteCode)}</p>
+      <p>Share this with a customer. They enter it to link their home to you.</p>
+      <div class="row">
+        <button type="button" class="btn primary" data-action="copy-code">Copy code</button>
+        <button type="button" class="btn ghost" data-action="share-code">Share</button>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Homes</h2>
+      ${homes}
+    </section>`;
+}
+
+function renderCustomerProfile(model) {
+  if (!model.homes.length) {
+    return `<section class="panel">
+      <h2>Your home</h2>
+      <p class="quiet">No home linked yet.</p>
+      <button type="button" class="btn primary" data-action="show-link">Link a new home</button>
+    </section>`;
+  }
+  const homeTitle = model.homes.length > 1 ? "Your homes" : "Your home";
+  const homes = model.homes
+    .map(
+      (home) => `<div class="link-row">
+        <p class="home-name">${esc(home.name)}</p>
+        <p class="address">${esc(home.address)}</p>
+        <p class="when">Usual visit ${esc(weekdayLabel(home.visitWeekday, { plural: true }))}</p>
+      </div>`,
+    )
+    .join("");
+  const cleanerNames = [...new Set(model.homes.map((home) => home.cleanerName).filter(Boolean))];
+  const cleanerTitle = cleanerNames.length > 1 ? "Your cleaners" : "Your cleaner";
+  const cleaners = cleanerNames.length
+    ? `<section class="panel">
+        <h2>${cleanerTitle}</h2>
+        ${cleanerNames.map((name) => `<p class="person-name">${esc(name)}</p>`).join("")}
+      </section>`
+    : `<section class="panel"><h2>Your cleaner</h2><p class="quiet">No cleaner linked yet.</p></section>`;
+  return `<section class="panel"><h2>${homeTitle}</h2>${homes}</section>${cleaners}`;
+}
+
+function renderProfile(state) {
+  const model = profileModel(state);
+  if (!model.role) {
+    return `${pageHead("Profile")}
+      <main id="main"><div class="empty"><p>No demo user is selected.</p></div></main>`;
+  }
+  const error = ui.profileError ? `<p class="form-error" role="alert">${esc(ui.profileError)}</p>` : "";
+  const links = model.role === "cleaner" ? renderCleanerProfile(model) : renderCustomerProfile(model);
+  return `${pageHead("Profile")}
+    <main id="main">
+      <section class="panel">
+        <form id="profile-form" novalidate>
+          ${error}
+          <label class="field" for="display-name">Display name
+            <input id="display-name" name="displayName" type="text" maxlength="80" autocomplete="name" enterkeyhint="done" required value="${esc(model.name)}" />
+          </label>
+          <p class="quiet">Tasks you mark done from now on use this name.</p>
+          <button type="submit" class="btn primary">Save name</button>
+        </form>
+        <dl class="facts">
+          <div><dt>Role</dt><dd>${esc(model.roleLabel)}</dd></div>
+        </dl>
+      </section>
+      ${links}
+    </main>`;
+}
+
+function renderSettings(state) {
+  return `${pageHead("Settings")}
+    <main id="main">
+      <section class="panel">
+        <h2>Demo</h2>
+        <p>${esc(SETTINGS_NOTE)}</p>
+        ${renderRoleSwitch(state)}
+        <div class="stack">
+          <button type="button" class="btn ghost" data-action="show-link">Link a new home</button>
+          <button type="button" class="btn ghost" data-action="ask-reset">Reset demo data</button>
+        </div>
+      </section>
+    </main>`;
+}
+
+function renderPlaceholder() {
+  const tab = placeholderTab();
+  return `${pageHead(tab?.label || "More")}
+    <main id="main">
+      <section class="panel coming-soon">
+        <h2>${esc(MORE_SCREEN.title)}</h2>
+        <p>${esc(MORE_SCREEN.body)}</p>
+      </section>
+    </main>`;
+}
+
+function renderScreen(state) {
+  const tab = normaliseTab(ui.tab);
+  if (tab === "profile") return renderProfile(state);
+  if (tab === "settings") return renderSettings(state);
+  const placeholder = placeholderTab();
+  if (placeholder && tab === placeholder.id) return renderPlaceholder();
+  return `${renderHeader(state)}${renderMain(state)}`;
+}
+
+function mountTabBar(active) {
+  const html = renderTabBar(active);
+  const existing = document.getElementById("tab-bar");
+  if (existing) existing.outerHTML = html;
+  else document.body.insertAdjacentHTML("beforeend", html);
+  const bar = document.getElementById("tab-bar");
+  const modalOpen = Boolean(ui.sheet || ui.doneOn || ui.confirmReset || ui.pendingDelete);
+  bar?.toggleAttribute("inert", modalOpen);
+}
+
 function render(options = {}) {
   const root = document.querySelector("#app");
   const state = repo.getState();
   const y = options.scroll === "top" ? 0 : window.scrollY;
-  root.innerHTML = `${renderDemo(state)}${renderHeader(state)}${renderMain(state)}${renderToast()}${renderModal()}`;
+  root.innerHTML = `${renderScreen(state)}${renderToast()}${renderModal()}`;
+  mountTabBar(ui.tab);
   document.body.classList.toggle("modal-open", Boolean(ui.sheet || ui.doneOn || ui.confirmReset || ui.pendingDelete));
   if (options.scroll === "top") window.scrollTo(0, 0);
   else window.scrollTo(0, y);
@@ -718,6 +850,7 @@ function clearTransient() {
   ui.menu = null;
   ui.toast = null;
   ui.linkError = "";
+  ui.profileError = "";
   ui.notes = {};
   clearTimeout(toastTimer);
 }
@@ -859,6 +992,13 @@ async function handleClick(event) {
     render();
     return;
   }
+  if (action === "show-tab") {
+    ui.menu = null;
+    ui.profileError = "";
+    ui.tab = normaliseTab(button.dataset.tab);
+    render({ scroll: "top", focus: `tab-${ui.tab}` });
+    return;
+  }
   if (action === "ask-reset") {
     ui.confirmReset = true;
     ui.sheet = null;
@@ -880,6 +1020,7 @@ async function handleClick(event) {
     return;
   }
   if (action === "show-link") {
+    ui.tab = "dashboard";
     ui.sheet = null;
     ui.linkError = "";
     await repo.showLinkForm();
@@ -1031,6 +1172,18 @@ async function handleClick(event) {
 }
 
 async function handleSubmit(event) {
+  if (event.target.id === "profile-form") {
+    const data = new FormData(event.target);
+    const result = await repo.setDisplayName(data.get("displayName"));
+    if (!result.ok) {
+      ui.profileError = result.error || "Couldn't save that name.";
+      render({ focus: "display-name" });
+      return;
+    }
+    ui.profileError = "";
+    showToast({ message: "Name saved." });
+    return;
+  }
   if (event.target.id === "link-form") {
     readLinkForm();
     const result = await repo.linkHome(ui.link);
@@ -1039,6 +1192,7 @@ async function handleSubmit(event) {
       render({ focus: "invite-code" });
       return;
     }
+    ui.tab = "dashboard";
     ui.link = emptyLink();
     ui.linkError = "";
     showToast({ message: "Home linked. You're seeing it as the customer." }, { scroll: "top" });
@@ -1167,7 +1321,7 @@ function bind() {
   });
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (form?.id === "link-form" || form?.id === "task-form" || form?.id === "done-on-form") {
+    if (form?.id === "link-form" || form?.id === "task-form" || form?.id === "done-on-form" || form?.id === "profile-form") {
       event.preventDefault();
       void handleSubmit(event);
     }
@@ -1187,6 +1341,7 @@ function bind() {
 }
 
 bind();
+mountTabBar(ui.tab);
 void repo.load().then(() => {
   render({ scroll: "top" });
   registerServiceWorker();

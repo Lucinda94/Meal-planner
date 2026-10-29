@@ -10,7 +10,7 @@ The name “Tidy Together” is a placeholder. To change it, edit `APP_NAME` in 
 
 ## Try the demo
 
-Everything is saved on this phone only. Nothing is sent to a server, and the cleaner and the customers are not different people yet. Use **Demo** at the top to switch between Priya the cleaner and each home.
+Everything is saved in this browser only. Nothing is sent to a server, and the cleaner and the customers are not different people yet. The bar along the bottom has **Dashboard**, **Profile**, **Settings**, and **More**. Dashboard is the visits and tasks. Profile shows the current name, role, and linked homes, and Priya’s invite code. You can change the display name there. Settings has **Viewing as**, **Link a new home**, and **Reset demo data**. More is a placeholder until it has a job. Open **Settings** and use **Viewing as** to switch between Priya the cleaner and each home.
 
 - Priya looks after three homes around Bristol. Each home has rooms and tasks, with how often they need doing.
 - A task is **Due**, **Due soon**, or **Not needed yet**, from the last time it was done and how often it repeats.
@@ -21,7 +21,7 @@ Everything is saved on this phone only. Nothing is sent to a server, and the cle
 - Priya’s home screen lists every home, the next visit, and how many tasks are due. Open a home for **Due this visit** and what can wait.
 - The customer and the cleaner can each leave a note.
 - Priya’s invite code is **MAPLE-7K**. **Link a new home** asks for that code.
-- **Reset demo data** puts the three sample homes back, with dates worked out from today.
+- **Reset demo data**, on Settings, puts the three sample homes back, with dates worked out from today.
 
 ## How a real login and database would work
 
@@ -48,7 +48,7 @@ Use a magic link (or similar) so each person has an `auth.uid()`. Turn on row-le
 - Notes stay on the home. The customer may update `customer_note`. The cleaner may update `cleaner_note`. A narrow policy or a trigger should stop either person editing the other’s note.
 - Don’t let a customer list every cleaner. A database function `link_home(invite_code, address, visit_weekday)` looks up the cleaner by code and inserts the home with `customer_id = auth.uid()`.
 
-Swap `js/store.js` for a repository with the same methods (`visibleHomes`, `markDone`, `saveTask`, `setNote`, `linkHome`, and so on) that call Supabase. The screens can stay. Replace the Demo switcher with the signed-in user.
+Swap `js/store.js` for a repository with the same methods (`visibleHomes`, `markDone`, `saveTask`, `setNote`, `linkHome`, `setDisplayName`, and so on) that call Supabase. The screens can stay. Replace the Viewing as switcher on Settings with the signed-in user. The bottom bar is in `js/nav.js`: rename the placeholder tab there, or remove its `placeholder` flag when that tab gets a real page.
 
 ### Firebase
 
