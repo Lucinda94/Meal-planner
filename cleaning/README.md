@@ -12,10 +12,11 @@ The name “Tidy Together” is a placeholder. To change it, edit `APP_NAME` in 
 
 Everything is saved in this browser only. Nothing is sent to a server, and the cleaner and the customers are not different people yet. The bar along the bottom has **Dashboard**, **Profile**, **Settings**, and **More**. Dashboard is the visits and tasks. Profile shows the current name, role, and linked homes, and Priya’s invite code. You can change the display name there. Settings has **Viewing as**, **Link a new home**, and **Reset demo data**. More is a placeholder until it has a job. Open **Settings** and use **Viewing as** to switch between Priya the cleaner and each home.
 
-- Priya looks after three homes around Bristol. Each home has rooms and tasks, with how often they need doing.
+- Priya looks after three homes around Bristol. Open a home to see its rooms. Each room shows how many tasks it has, and how many are due or overdue. Tap a room to see only those tasks.
+- Priya can tap **What's due this visit** to see everything due across rooms, then go back to the rooms.
 - A task is **Due**, **Due soon**, or **Not needed yet**, from the last time it was done and how often it repeats.
 - The customer or Priya can mark a task done. That records who did it and when, and it drops off the due list until it is needed again. Helen has already cleaned her oven, so Priya can see it is not needed for three months.
-- Either person can add a task: the name, the room, how often it repeats, and, if it has already been done, the date it was last done. Leave Last done blank if it has never been done. Priya can add one from the visit screen, under the note from the customer. A short line says whether the cleaner or the customer added it. The other person sees the same task. Tasks that were already on the list stay as they are, with no extra line.
+- Either person can add a task: the name, the room, how often it repeats, and, if it has already been done, the date it was last done. How often is a number and Day(s), Week(s), Month(s), or Year(s). It shows as Every week, Every 2 weeks, Every 3 months, or Every year. Tasks saved as every visit stay as every visit. Leave Last done blank if it has never been done. Add a task from a room and that room is already chosen. A short line says whether the cleaner or the customer added it. The other person sees the same task. Tasks that were already on the list stay as they are, with no extra line.
 - Either person can change or remove a task. Tap the three dots beside it, then Edit or Delete. Edit opens the name, the room, how often, and Last done, already filled in. Change the date if it was done on a different day, or tap Not done yet to clear it. You can't pick a future day. Dates show as 12 Oct 2026. Saving updates when the task is next due, and the other person sees that straight away. Delete asks you to confirm first. Cancel leaves the task alone.
 - Mark done still means today, in one tap. Done on a different day? — under that button, or in the three-dot menu — lets you record an earlier day, for example last Tuesday. The next due date is worked out from the day you pick. A future day isn't allowed.
 - Priya’s home screen lists every home, the next visit, and how many tasks are due. Open a home for **Due this visit** and what can wait.
@@ -36,7 +37,7 @@ Suggested tables:
 | `accounts` | The person, their role (`cleaner` or `customer`), and the cleaner’s invite code. The id matches the login user. |
 | `homes` | Address, visit weekday, customer id, cleaner id, and the two notes. |
 | `rooms` | A room in one home. |
-| `tasks` | The job, how often (`every visit`, or every N days, weeks, or months), and who added it (`cleaner` or `customer`) when that was recorded. |
+| `tasks` | The job, how often (every N days, weeks, months, or years, or every visit), and who added it (`cleaner` or `customer`) when that was recorded. |
 | `completions` | When a task was marked done, including a date set by hand, and which account did it. |
 
 ### Supabase

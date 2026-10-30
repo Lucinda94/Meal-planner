@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addMonths, formatUkDate, nextVisitOnOrAfter, parseDateInput, toDateInputValue } from "../js/dates.js";
+import { addMonths, addYears, formatUkDate, nextVisitOnOrAfter, parseDateInput, toDateInputValue } from "../js/dates.js";
 import { buildSeed } from "../js/demo-data.js";
-import { formatFrequency, latestCompletion, taskStatus, tasksWithStatus } from "../js/dueness.js";
+import {
+  canonicalFrequency,
+  formatFrequency,
+  frequencyFormValue,
+  isCanonicalFrequency,
+  latestCompletion,
+  readFrequency,
+  roomCardModel,
+  roomSummaries,
+  taskStatus,
+  tasksWithStatus,
+  visitOverviewModel,
+} from "../js/dueness.js";
 import { STORAGE_KEY } from "../js/config.js";
 import { addedByLabel, createDemoRepository, memoryStorage, normaliseCode } from "../js/store.js";
 
@@ -28,6 +40,32 @@ function stateOf(state, id, now = tuesday) {
   return statusOf(state, id, now).state;
 }
 
+test("years use calendar maths and clamp the end of February", () => {
+  const january = new Date(2026, 0, 31, 12);
+  const nextJanuary = addYears(january, 1);
+  assert.equal(nextJanuary.getFullYear(), 2027);
+  assert.equal(nextJanuary.getMonth(), 0);
+  assert.equal(nextJanuary.getDate(), 31);
+
+  const leap = new Date(2024, 1, 29, 12);
+  const notLeap = addYears(leap, 1);
+  assert.equal(notLeap.getFullYear(), 2025);
+  assert.equal(notLeap.getMonth(), 1);
+  assert.equal(notLeap.getDate(), 28);
+
+  const nextLeap = addYears(leap, 4);
+  assert.equal(nextLeap.getFullYear(), 2028);
+  assert.equal(nextLeap.getMonth(), 1);
+  assert.equal(nextLeap.getDate(), 29);
+
+  const march = new Date(2026, 2, 31, 12);
+  const april = addMonths(march, 1);
+  assert.equal(april.getDate(), 30);
+  const threeMonths = addMonths(january, 3);
+  assert.equal(threeMonths.getMonth(), 3);
+  assert.equal(threeMonths.getDate(), 30);
+});
+
 test("month maths clamps to the end of a short month", () => {
   const january = new Date(2026, 0, 31, 12);
   const february = addMonths(january, 1);
@@ -50,10 +88,16 @@ test("next visit includes today when today is the cleaning day", () => {
 
 test("frequency wording stays in plain English", () => {
   assert.equal(formatFrequency({ unit: "visit" }), "Every visit");
+  assert.equal(formatFrequency({ every: 1, unit: "visit" }), "Every visit");
+  assert.equal(formatFrequency({ unit: "days", every: 1 }), "Every day");
   assert.equal(formatFrequency({ unit: "weeks", every: 1 }), "Every week");
   assert.equal(formatFrequency({ unit: "weeks", every: 2 }), "Every 2 weeks");
   assert.equal(formatFrequency({ unit: "months", every: 3 }), "Every 3 months");
+  assert.equal(formatFrequency({ unit: "months", every: 1 }), "Every month");
+  assert.equal(formatFrequency({ unit: "years", every: 1 }), "Every year");
+  assert.equal(formatFrequency({ unit: "years", every: 2 }), "Every 2 years");
   assert.equal(formatFrequency({ unit: "days", every: 10 }), "Every 10 days");
+  assert.equal(formatFrequency({ unit: "year", every: "1" }), "Every year");
 });
 
 test("sample homes mix due, due soon, and not needed yet", () => {
@@ -322,10 +366,15 @@ test("either person can edit or delete a task, and the other person sees it", as
   assert.equal(taskById(repo.getState(), "task_helen_oven"), null);
   const byCleaner = await repo.deleteTask("home_helen", "task_helen_hall");
   assert.equal(byCleaner.ok, true);
+  assert.ok(taskById(repo.getState(), "task_helen_alarm"));
+  assert.equal(repo.getState().homes[0].rooms.some((room) => room.name === "Hall"), true);
+  const alarm = await repo.deleteTask("home_helen", "task_helen_alarm");
+  assert.equal(alarm.ok, true);
   assert.equal(repo.getState().homes[0].rooms.some((room) => room.name === "Hall"), false);
 
   await repo.setAccount("acct_helen");
   assert.equal(taskById(repo.getState(), "task_helen_hall"), null);
+  assert.equal(taskById(repo.getState(), "task_helen_alarm"), null);
   assert.ok(taskById(repo.getState(), "task_helen_worktops"));
   assert.equal(repo.getState().homes[0].customerNote, note);
 
@@ -738,6 +787,247 @@ test("the display name can be edited and stays in this browser", async () => {
   assert.equal(again.getState().accounts.find((account) => account.id === "acct_helen").name, "Helen Cartwright");
   assert.equal(again.currentAccount().id, "acct_priya");
   assert.equal(storage.getItem("meal-planner.v1"), null);
+});
+
+test("due dates follow days, weeks, months, and years", () => {
+  const months = taskStatus(
+    {
+      frequency: { unit: "months", every: 1 },
+      completions: [{ at: new Date(2026, 0, 31, 12).toISOString() }],
+    },
+    { today: tuesday, visitWeekday: "tuesday" },
+  );
+  assert.equal(months.state, "due");
+  assert.equal(months.detail, "Overdue · was due 28 Feb 2026");
+
+  const threeMonths = taskStatus(
+    {
+      frequency: { unit: "months", every: 3 },
+      completions: [{ at: new Date(2026, 0, 31, 12).toISOString() }],
+    },
+    { today: tuesday, visitWeekday: "tuesday" },
+  );
+  assert.equal(threeMonths.detail, "Overdue · was due 30 Apr 2026");
+
+  const years = taskStatus(
+    {
+      frequency: { unit: "years", every: 1 },
+      completions: [{ at: new Date(2026, 0, 31, 12).toISOString() }],
+    },
+    { today: tuesday, visitWeekday: "tuesday" },
+  );
+  assert.equal(years.state, "later");
+  assert.equal(years.detail, "Next due 31 Jan 2027");
+
+  const leap = taskStatus(
+    {
+      frequency: { unit: "years", every: 1 },
+      completions: [{ at: new Date(2024, 1, 29, 12).toISOString() }],
+    },
+    { today: new Date(2025, 2, 1, 12), visitWeekday: "monday" },
+  );
+  assert.equal(leap.detail, "Overdue · was due 28 Feb 2025");
+
+  const days = taskStatus(
+    {
+      frequency: { unit: "days", every: 10 },
+      completions: [{ at: new Date(2026, 9, 20, 12).toISOString() }],
+    },
+    { today: tuesday, visitWeekday: "tuesday" },
+  );
+  assert.equal(days.state, "soon");
+  assert.equal(days.detail, "Due 30 Oct 2026");
+});
+
+test("how often rejects an empty, zero, negative, or partial number", () => {
+  assert.equal(readFrequency("", "weeks").ok, false);
+  assert.match(readFrequency("", "weeks").error, /how often/i);
+  assert.equal(readFrequency("0", "weeks").ok, false);
+  assert.match(readFrequency("0", "months").error, /1 or more/);
+  assert.match(readFrequency("-2", "days").error, /1 or more/);
+  assert.match(readFrequency("1.5", "years").error, /whole number/);
+  assert.match(readFrequency("2.0", "weeks").error, /decimals/);
+  assert.match(readFrequency("abc", "weeks").error, /whole number/);
+  assert.match(readFrequency("100", "weeks").error, /99 or less/);
+  assert.equal(readFrequency("nope", "fortnights").ok, false);
+
+  const week = readFrequency("1", "weeks");
+  assert.equal(week.ok, true);
+  assert.deepEqual(week.frequency, { unit: "weeks", every: 1 });
+  assert.deepEqual(readFrequency("3", "months").frequency, { unit: "months", every: 3 });
+  assert.deepEqual(readFrequency("1", "years").frequency, { unit: "years", every: 1 });
+  assert.deepEqual(readFrequency(" 2 ", "days").frequency, { unit: "days", every: 2 });
+  assert.equal(formatFrequency(readFrequency("1", "years").frequency), "Every year");
+  assert.equal(formatFrequency(readFrequency("2", "weeks").frequency), "Every 2 weeks");
+
+  assert.deepEqual(frequencyFormValue({ unit: "months", every: 3 }), { every: "3", unit: "months" });
+  assert.deepEqual(frequencyFormValue({ unit: "visit" }), { every: "1", unit: "visit" });
+  assert.deepEqual(frequencyFormValue({ unit: "year", every: 1 }), { every: "1", unit: "years" });
+  assert.deepEqual(frequencyFormValue("2-weeks"), { every: "2", unit: "weeks" });
+});
+
+test("saved tasks move from the old frequency onto number and unit", async () => {
+  const storage = memoryStorage();
+  const seeded = createDemoRepository({ storage, now: () => tuesday });
+  await seeded.load();
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  const tasks = raw.homes.flatMap((home) => home.rooms.flatMap((room) => room.tasks));
+  const oven = tasks.find((task) => task.id === "task_helen_oven");
+  const worktops = tasks.find((task) => task.id === "task_helen_worktops");
+  const bedding = tasks.find((task) => task.id === "task_helen_bedding");
+  const windows = tasks.find((task) => task.id === "task_helen_windows");
+  oven.frequency = { unit: "month", every: "3" };
+  worktops.frequency = { unit: "visit" };
+  bedding.frequency = "2-weeks";
+  windows.frequency = { preset: "1-months" };
+  const dust = tasks.find((task) => task.id === "task_helen_living_dust");
+  dust.frequency = { unit: "weeks", every: 0 };
+  const alarm = tasks.find((task) => task.id === "task_helen_alarm");
+  alarm.frequency = { unit: "years", every: 120 };
+  storage.setItem(STORAGE_KEY, JSON.stringify(raw));
+
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  assert.equal(repo.getState().version, 1);
+  assert.deepEqual(taskById(repo.getState(), "task_helen_oven").task.frequency, { unit: "months", every: 3 });
+  assert.deepEqual(taskById(repo.getState(), "task_helen_worktops").task.frequency, { every: 1, unit: "visit" });
+  assert.deepEqual(taskById(repo.getState(), "task_helen_bedding").task.frequency, { unit: "weeks", every: 2 });
+  assert.deepEqual(taskById(repo.getState(), "task_helen_windows").task.frequency, { unit: "months", every: 1 });
+  assert.deepEqual(taskById(repo.getState(), "task_helen_living_dust").task.frequency, { unit: "weeks", every: 1 });
+  assert.deepEqual(taskById(repo.getState(), "task_helen_alarm").task.frequency, { unit: "years", every: 99 });
+  assert.equal(formatFrequency(taskById(repo.getState(), "task_helen_oven").task.frequency), "Every 3 months");
+  assert.equal(formatFrequency(taskById(repo.getState(), "task_helen_worktops").task.frequency), "Every visit");
+  assert.equal(stateOf(repo.getState(), "task_helen_oven"), "later");
+  assert.equal(stateOf(repo.getState(), "task_helen_worktops"), "due");
+  assert.equal(isCanonicalFrequency(taskById(repo.getState(), "task_helen_bedding").task.frequency), true);
+  assert.equal(canonicalFrequency({ unit: "week", every: "2" }).unit, "weeks");
+
+  const again = createDemoRepository({ storage, now: () => tuesday });
+  await again.load();
+  const saved = JSON.parse(storage.getItem(STORAGE_KEY));
+  const savedOven = saved.homes.flatMap((home) => home.rooms.flatMap((room) => room.tasks)).find((task) => task.id === "task_helen_oven");
+  assert.deepEqual(savedOven.frequency, { unit: "months", every: 3 });
+  assert.equal(saved.version, 1);
+
+  await repo.setAccount("acct_helen");
+  const rejected = await repo.saveTask("home_helen", {
+    roomId: "room_helen_kitchen",
+    name: "Too often",
+    frequency: { unit: "weeks", every: 0 },
+  });
+  assert.equal(rejected.ok, false);
+  const negative = await repo.saveTask("home_helen", {
+    roomId: "room_helen_kitchen",
+    name: "Too often",
+    frequency: { unit: "weeks", every: -1 },
+  });
+  assert.equal(negative.ok, false);
+  const fraction = await repo.saveTask("home_helen", {
+    roomId: "room_helen_kitchen",
+    name: "Too often",
+    frequency: { unit: "months", every: 1.5 },
+  });
+  assert.equal(fraction.ok, false);
+  const huge = await repo.saveTask("home_helen", {
+    roomId: "room_helen_kitchen",
+    name: "Too often",
+    frequency: { unit: "years", every: 100 },
+  });
+  assert.equal(huge.ok, false);
+
+  const yearly = await repo.saveTask("home_helen", {
+    roomId: "room_helen_hall",
+    name: "Service the boiler",
+    frequency: { unit: "years", every: 1 },
+    lastDone: new Date(2026, 0, 31, 12),
+  });
+  assert.equal(yearly.ok, true);
+  assert.equal(formatFrequency(taskById(repo.getState(), yearly.taskId).task.frequency), "Every year");
+  assert.equal(statusOf(repo.getState(), yearly.taskId).detail, "Next due 31 Jan 2027");
+  assert.deepEqual(frequencyFormValue(taskById(repo.getState(), yearly.taskId).task.frequency), {
+    every: "1",
+    unit: "years",
+  });
+});
+
+test("a home opens onto its rooms, and the cleaner can still see this visit", async () => {
+  const storage = memoryStorage();
+  const repo = createDemoRepository({ storage, now: () => tuesday });
+  await repo.load();
+  const state = repo.getState();
+  const helen = state.homes[0];
+  const kitchen = roomCardModel(roomSummaries(helen, tuesday).find((room) => room.id === "room_helen_kitchen"));
+  assert.equal(kitchen.name, "Kitchen");
+  assert.equal(kitchen.taskCount, 4);
+  assert.equal(kitchen.dueCount, 3);
+  assert.equal(kitchen.overdueCount, 1);
+  assert.equal(kitchen.taskLabel, "4 tasks");
+  assert.equal(kitchen.dueLabel, "3 due");
+  assert.equal(kitchen.detail, "4 tasks · 1 overdue");
+  assert.equal(kitchen.tone, "due");
+
+  const hall = roomCardModel(roomSummaries(helen, tuesday).find((room) => room.id === "room_helen_hall"));
+  assert.equal(hall.taskCount, 2);
+  assert.equal(hall.dueCount, 0);
+  assert.equal(hall.dueLabel, "Nothing due");
+  assert.equal(hall.detail, "2 tasks");
+  assert.equal(statusOf(state, "task_helen_alarm").detail, "Next due 27 Sep 2027");
+  assert.equal(formatFrequency(taskById(state, "task_helen_alarm").task.frequency), "Every year");
+
+  const overview = visitOverviewModel(helen, tuesday);
+  assert.ok(overview.dueCount >= kitchen.dueCount);
+  assert.ok(overview.names.includes("Wipe the worktops and hob"));
+  assert.equal(overview.names.includes("Clean the oven"), false);
+
+  await repo.setAccount("acct_priya");
+  await repo.openHome("home_helen");
+  assert.equal(repo.getState().view.screen, "home");
+  assert.equal(repo.getState().view.roomId, null);
+
+  const opened = await repo.openRoom("home_helen", "room_helen_kitchen");
+  assert.equal(opened.ok, true);
+  assert.equal(repo.getState().view.screen, "room");
+  assert.equal(repo.getState().view.roomId, "room_helen_kitchen");
+
+  const kept = createDemoRepository({ storage, now: () => tuesday });
+  await kept.load();
+  assert.equal(kept.getState().view.screen, "room");
+  assert.equal(kept.getState().view.roomId, "room_helen_kitchen");
+  assert.equal(kept.getState().version, 1);
+
+  const missing = await kept.openRoom("home_helen", "room_missing");
+  assert.equal(missing.ok, false);
+
+  await kept.setAccount("acct_helen");
+  const foreign = await kept.openRoom("home_james", "room_james_kitchen");
+  assert.equal(foreign.ok, false);
+  const notForCustomer = await kept.showVisitOverview("home_helen");
+  assert.equal(notForCustomer.ok, false);
+
+  const ownRoom = await kept.openRoom("home_helen", "room_helen_bathroom");
+  assert.equal(ownRoom.ok, true);
+  const back = await kept.showRooms("home_helen");
+  assert.equal(back.ok, true);
+  assert.equal(kept.getState().view.screen, "home");
+  assert.equal(kept.getState().view.roomId, null);
+
+  await kept.setAccount("acct_priya");
+  await kept.openHome("home_helen");
+  const visit = await kept.showVisitOverview("home_helen");
+  assert.equal(visit.ok, true);
+  assert.equal(kept.getState().view.screen, "visit");
+  assert.equal(kept.getState().view.roomId, null);
+  const roomsAgain = await kept.showRooms("home_helen");
+  assert.equal(roomsAgain.ok, true);
+  assert.equal(kept.getState().view.screen, "home");
+
+  const single = roomCardModel({ id: "room", name: "Study", taskCount: 1, dueCount: 1, overdueCount: 1 });
+  assert.equal(single.taskLabel, "1 task");
+  assert.equal(single.dueLabel, "1 due");
+  assert.equal(single.detail, "1 task · 1 overdue");
+  const none = roomCardModel({ id: "room", name: "Study", taskCount: 0, dueCount: 0, overdueCount: 0 });
+  assert.equal(none.taskLabel, "No tasks");
+  assert.equal(none.dueLabel, "Nothing due");
 });
 
 test("reset puts the sample homes back and keeps them on this phone", async () => {

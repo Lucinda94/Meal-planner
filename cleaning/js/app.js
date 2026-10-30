@@ -11,24 +11,19 @@ import {
   weekdayLabel,
 } from "./dates.js";
 import {
+  FREQUENCY_UNITS,
   countByState,
   formatFrequency,
-  frequencyFromPreset,
+  frequencyFormValue,
   latestCompletion,
-  presetForFrequency,
+  readFrequency,
+  roomCardModel,
+  roomSummaries,
   tasksWithStatus,
+  visitOverviewModel,
 } from "./dueness.js";
 import { MORE_SCREEN, SETTINGS_NOTE, normaliseTab, placeholderTab, profileModel, renderTabBar } from "./nav.js";
 import { addedByLabel, createDemoRepository, firstName, shortAddress } from "./store.js";
-
-const PRESETS = [
-  ["visit", "Every visit"],
-  ["1-weeks", "Every week"],
-  ["2-weeks", "Every 2 weeks"],
-  ["1-months", "Every month"],
-  ["3-months", "Every 3 months"],
-  ["custom", "Custom"],
-];
 
 const repo = createDemoRepository();
 const ui = {
@@ -247,12 +242,34 @@ function renderHeader(state) {
   let title = APP_NAME;
   let lede = "";
 
+  const room = home && view.screen === "room"
+    ? home.rooms.find((item) => item.id === view.roomId) || null
+    : null;
+
   if (view.screen === "link") {
     const backLabel = account?.role === "cleaner" ? "Homes" : "Back";
     back = `<button type="button" class="back" data-action="back">${backIcon()} ${esc(backLabel)}</button>`;
     title = "Link a home";
     lede = "Enter the code your cleaner gave you. This links the home to their list.";
-  } else if (account?.role === "cleaner" && view.screen === "home" && home) {
+  } else if (room && home) {
+    const card = roomCardModel(
+      roomSummaries(home, today()).find((item) => item.id === room.id) || {
+        id: room.id,
+        name: room.name,
+        taskCount: room.tasks.length,
+        dueCount: 0,
+        overdueCount: 0,
+      },
+    );
+    back = `<button type="button" class="back" id="back-rooms" data-action="show-rooms" data-home="${esc(home.id)}">${backIcon()} Rooms</button>`;
+    title = room.name;
+    lede = card.dueCount ? `${card.taskLabel} · ${card.dueLabel}` : card.taskLabel;
+  } else if (account?.role === "cleaner" && view.screen === "visit" && home) {
+    const customer = customerOf(state, home);
+    back = `<button type="button" class="back" id="back-rooms" data-action="show-rooms" data-home="${esc(home.id)}">${backIcon()} Rooms</button>`;
+    title = customer?.name || home.name;
+    lede = "What's due this visit";
+  } else if (account?.role === "cleaner" && home && (view.screen === "home" || view.screen === "room")) {
     const customer = customerOf(state, home);
     back = `<button type="button" class="back" data-action="back">${backIcon()} Homes</button>`;
     title = customer?.name || home.name;
@@ -284,8 +301,9 @@ function renderMain(state) {
   const warning = repo.saveWarning();
   const banner = warning ? `<p class="banner" role="status">${esc(warning)}</p>` : "";
   let body = "";
+  const onHome = state.view.screen === "home" || state.view.screen === "room" || state.view.screen === "visit";
   if (state.view.screen === "link") body = renderLink(state);
-  else if (account?.role === "cleaner" && (state.view.screen !== "home" || !visibleHome(state))) body = renderOverview(state);
+  else if (account?.role === "cleaner" && (!onHome || !visibleHome(state))) body = renderOverview(state);
   else body = renderHome(state, account);
   return `<main id="main">${banner}${body}</main>`;
 }
@@ -342,21 +360,104 @@ function renderHome(state, account) {
       <button type="button" class="btn primary" data-action="show-link">Link a new home</button></div>`;
   }
   const now = today();
-  const { rows } = tasksWithStatus(home, now);
-  const counts = countByState(rows);
-  const isCustomer = account.role === "customer";
-  const summary = rows.length
-    ? `<p class="summary"><span class="pill due">${counts.due} due</span><span class="pill soon">${counts.soon} due soon</span><span class="pill later">${counts.later} not needed yet</span></p>`
-    : "";
-  const visit = isCustomer ? renderVisitEditor(home) : "";
-  const tasks = isCustomer ? renderCustomerTasks(home, account, rows, now) : renderCleanerTasks(home, account, rows, now);
-  if (isCustomer) return `${summary}${visit}${tasks}${renderCustomerNotes(state, home)}`;
+  const room = state.view.screen === "room"
+    ? home.rooms.find((item) => item.id === state.view.roomId) || null
+    : null;
+  if (room) return renderRoomView(home, account, room, now);
+  if (state.view.screen === "visit" && account.role === "cleaner") return renderVisitScreen(state, home, account, now);
+  return renderRoomList(state, home, account, now);
+}
+
+function customerNoteBlock(state, home) {
   const customer = customerOf(state, home);
   const name = customer ? firstName(customer.name) : "The customer";
   const fromCustomer = home.customerNote
     ? `<blockquote class="note-card quote"><p class="note-label">Note from ${esc(name)}</p><p class="note-body">${esc(home.customerNote)}</p></blockquote>`
     : `<p class="quiet">No note from ${esc(name)} for this visit.</p>`;
-  return `${fromCustomer}${tasks}${renderCleanerReply(home, name)}`;
+  return { name, fromCustomer };
+}
+
+function renderRoomList(state, home, account, now) {
+  const { rows } = tasksWithStatus(home, now);
+  const counts = countByState(rows);
+  const isCustomer = account.role === "customer";
+  const cards = renderRoomCards(home, now);
+  const add = addTaskButton(home);
+  if (isCustomer) {
+    const summary = rows.length
+      ? `<p class="summary"><span class="pill due">${counts.due} due</span><span class="pill soon">${counts.soon} due soon</span><span class="pill later">${counts.later} not needed yet</span></p>`
+      : "";
+    const empty = rows.length
+      ? ""
+      : `<div class="empty">
+          <p>Add rooms and tasks for this home. For example, clean the oven every 3 months, or hoover every week.</p>
+          <button type="button" class="btn ghost" data-action="starter" data-home="${esc(home.id)}">Add a starter set</button>
+        </div>`;
+    return `${summary}${renderVisitEditor(home)}${add}${empty}${cards}${renderCustomerNotes(state, home)}`;
+  }
+  const { name, fromCustomer } = customerNoteBlock(state, home);
+  const empty = rows.length
+    ? ""
+    : `<div class="empty"><p>No tasks yet. Add one, with the room and how often it needs doing.</p></div>`;
+  return `${fromCustomer}${renderVisitCard(home, now)}${add}${empty}${cards}${renderCleanerReply(home, name)}`;
+}
+
+function renderVisitScreen(state, home, account, now) {
+  const { rows } = tasksWithStatus(home, now);
+  const { fromCustomer } = customerNoteBlock(state, home);
+  return `${fromCustomer}${renderCleanerTasks(home, account, rows, now)}`;
+}
+
+function renderRoomCards(home, now) {
+  const cards = roomSummaries(home, now).map(roomCardModel);
+  if (!cards.length) return "";
+  return `<h2 class="rooms-heading">Rooms</h2><div class="home-list">${cards.map((card) => renderRoomCard(home, card)).join("")}</div>`;
+}
+
+function renderRoomCard(home, card) {
+  return `<button type="button" class="home-card room-card" data-action="open-room" data-home="${esc(home.id)}" data-room="${esc(card.id)}">
+    <span class="home-top">
+      <span class="home-name">${esc(card.name)}</span>
+      <span class="badge ${esc(card.tone)}">${esc(card.dueLabel)}</span>
+    </span>
+    <span class="address">${esc(card.detail)}</span>
+    ${chevron()}
+  </button>`;
+}
+
+function renderVisitCard(home, now) {
+  const overview = visitOverviewModel(home, now);
+  const badge = overview.dueCount
+    ? `<span class="badge due">${overview.dueCount === 1 ? "1 due" : `${overview.dueCount} due`}</span>`
+    : `<span class="badge ok">Nothing due</span>`;
+  const names = overview.names.slice(0, 3);
+  const more = overview.names.length > 3 ? "…" : "";
+  const line = names.length
+    ? `<span class="preview">${esc(names.join(" · "))}${more}</span>`
+    : `<span class="address">See what can wait, across every room</span>`;
+  return `<button type="button" class="home-card visit-card" data-action="show-visit" data-home="${esc(home.id)}">
+    <span class="home-top">
+      <span class="home-name">What's due this visit</span>
+      ${badge}
+    </span>
+    ${line}
+    ${chevron()}
+  </button>`;
+}
+
+function renderRoomView(home, account, room, now) {
+  const rows = tasksWithStatus(home, now).rows.filter((row) => row.room.id === room.id);
+  const add = addTaskButton(home, room.id);
+  if (!rows.length) {
+    return `${add}<div class="empty"><p>No tasks in this room yet.</p></div>`;
+  }
+  const order = { due: 0, soon: 1, later: 2 };
+  const tasks = rows
+    .slice()
+    .sort((a, b) => order[a.status.state] - order[b.status.state])
+    .map(({ task, status }) => renderTaskArticle(home, account, room, task, status, now, { showRoom: false, showPill: true }))
+    .join("");
+  return `${add}<section class="room">${tasks}</section>`;
 }
 
 function renderCleanerReply(home, name) {
@@ -398,8 +499,9 @@ function addedByMarkup(task) {
   return label ? `<p class="added-by">${esc(label)}</p>` : "";
 }
 
-function addTaskButton(home) {
-  return `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}">Add a task</button></div>`;
+function addTaskButton(home, roomId = "") {
+  const room = roomId ? ` data-room="${esc(roomId)}"` : "";
+  return `<div class="page-actions"><button type="button" class="btn primary" data-action="add-task" data-home="${esc(home.id)}"${room}>Add a task</button></div>`;
 }
 
 function menuOpenFor(home, task) {
@@ -432,43 +534,25 @@ function taskActions(home, task, now) {
   </div>`;
 }
 
-function renderCustomerTasks(home, account, rows, now) {
-  const add = addTaskButton(home);
-  if (!rows.length) {
-    return `${add}<div class="empty">
-      <p>Add rooms and tasks for this home. For example, clean the oven every 3 months, or hoover every visit.</p>
-      <button type="button" class="btn ghost" data-action="starter" data-home="${esc(home.id)}">Add a starter set</button>
-    </div>`;
-  }
-  const byRoom = new Map();
-  for (const row of rows) {
-    if (!byRoom.has(row.room.id)) byRoom.set(row.room.id, { room: row.room, rows: [] });
-    byRoom.get(row.room.id).rows.push(row);
-  }
-  const rooms = [...byRoom.values()]
-    .map(({ room, rows: roomRows }) => {
-      const tasks = roomRows
-        .map(({ task, status }) => {
-          return `<article class="task" id="task-${esc(task.id)}">
-            <div class="task-body">
-              <div class="task-head">
-                <h3>${esc(task.name)}</h3>
-                ${taskMenu(home, task)}
-              </div>
-              <p class="freq">${esc(formatFrequency(task.frequency))}</p>
-              <p><span class="pill ${esc(status.state)}">${esc(status.label)}</span></p>
-              <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
-              <p class="meta">${esc(lastDoneText(task, account, now))}</p>
-              ${addedByMarkup(task)}
-            </div>
-            ${taskActions(home, task, now)}
-          </article>`;
-        })
-        .join("");
-      return `<section class="room"><h2>${esc(room.name)}</h2>${tasks}</section>`;
-    })
-    .join("");
-  return `${add}${rooms}`;
+function renderTaskArticle(home, account, room, task, status, now, { showRoom = false, showPill = false } = {}) {
+  const freq = showRoom
+    ? `${room.name} · ${formatFrequency(task.frequency)}`
+    : formatFrequency(task.frequency);
+  const pill = showPill ? `<p><span class="pill ${esc(status.state)}">${esc(status.label)}</span></p>` : "";
+  return `<article class="task" id="task-${esc(task.id)}">
+    <div class="task-body">
+      <div class="task-head">
+        <h3>${esc(task.name)}</h3>
+        ${taskMenu(home, task)}
+      </div>
+      <p class="freq">${esc(freq)}</p>
+      ${pill}
+      <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
+      <p class="meta">${esc(lastDoneText(task, account, now))}</p>
+      ${addedByMarkup(task)}
+    </div>
+    ${taskActions(home, task, now)}
+  </article>`;
 }
 
 function renderCleanerTasks(home, account, rows, now) {
@@ -487,21 +571,7 @@ function renderCleanerTasks(home, account, rows, now) {
       if (!items.length && !empty) return "";
       const list = items.length
         ? items
-            .map(({ room, task, status }) => {
-              return `<article class="task" id="task-${esc(task.id)}">
-                <div class="task-body">
-                  <div class="task-head">
-                    <h3>${esc(task.name)}</h3>
-                    ${taskMenu(home, task)}
-                  </div>
-                  <p class="freq">${esc(room.name)} · ${esc(formatFrequency(task.frequency))}</p>
-                  <p class="detail ${esc(status.state)}">${esc(status.detail)}</p>
-                  <p class="meta">${esc(lastDoneText(task, account, now))}</p>
-                  ${addedByMarkup(task)}
-                </div>
-                ${taskActions(home, task, now)}
-              </article>`;
-            })
+            .map(({ room, task, status }) => renderTaskArticle(home, account, room, task, status, now, { showRoom: true }))
             .join("")
         : `<p class="quiet">${esc(empty)}</p>`;
       return `<section class="group ${esc(stateName)}">
@@ -594,8 +664,29 @@ function renderDeleteDialog() {
   </div>`;
 }
 
+function frequencyControl(sheet) {
+  const units = FREQUENCY_UNITS.map(([id, label]) => {
+    const selected = sheet.unit === id ? " selected" : "";
+    return `<option value="${id}"${selected}>${esc(label)}</option>`;
+  }).join("");
+  const visit = sheet.unit === "visit" ? `<option value="visit" selected>Visit</option>` : "";
+  return `<fieldset class="frequency">
+    <legend>How often</legend>
+    <div class="frequency-row">
+      <span class="frequency-prefix" aria-hidden="true">Every</span>
+      <label class="field frequency-every" for="every">
+        <span class="sr-only">How many</span>
+        <input id="every" name="every" type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="99" step="1" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done" value="${esc(sheet.every)}" />
+      </label>
+      <label class="field frequency-unit" for="unit">
+        <span class="sr-only">Day, week, month, or year</span>
+        <select id="unit" name="unit">${visit}${units}</select>
+      </label>
+    </div>
+  </fieldset>`;
+}
+
 function renderTaskSheet() {
-  const state = repo.getState();
   const home = repo.homeById(ui.sheet.homeId);
   if (!home) return "";
   const sheet = ui.sheet;
@@ -618,14 +709,6 @@ function renderTaskSheet() {
     : `<label class="field" for="new-room-name">Room
         <input id="new-room-name" name="newRoomName" type="text" maxlength="40" autocomplete="off" placeholder="Kitchen, bathroom, bedroom…" value="${esc(sheet.newRoomName)}" required />
       </label>`;
-  const choices = PRESETS.map(([id, label]) => {
-    const checked = sheet.preset === id ? " checked" : "";
-    return `<label class="choice"><input type="radio" name="preset" value="${id}"${checked} /> ${esc(label)}</label>`;
-  }).join("");
-  const customHidden = sheet.preset === "custom" ? "" : " hidden";
-  const unit = ["days", "weeks", "months"]
-    .map((item) => `<option value="${item}"${sheet.unit === item ? " selected" : ""}>${item}</option>`)
-    .join("");
   const error = sheet.error ? `<p class="form-error" role="alert">${esc(sheet.error)}</p>` : "";
   return `<div class="backdrop">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="task-title">
@@ -637,18 +720,7 @@ function renderTaskSheet() {
             <input id="task-name" name="name" type="text" maxlength="80" autocomplete="off" enterkeyhint="next" required value="${esc(sheet.name)}" />
           </label>
           ${roomField}
-          <fieldset>
-            <legend>How often</legend>
-            ${choices}
-          </fieldset>
-          <div class="custom-row" id="custom-frequency"${customHidden}>
-            <label class="field" for="every">Every
-              <input id="every" name="every" type="number" inputmode="numeric" min="1" max="36" value="${esc(sheet.every)}" />
-            </label>
-            <label class="field" for="unit"><span class="sr-only">Days, weeks, or months</span>
-              <select id="unit" name="unit">${unit}</select>
-            </label>
-          </div>
+          ${frequencyControl(sheet)}
           <label class="field" for="last-done">Last done <span class="optional">(optional)</span>
             ${dateField({ id: "last-done", name: "lastDone", kind: "last-done", faceId: "last-done-face", hintId: "last-done-hint", value: sheet.lastDone })}
           </label>
@@ -888,7 +960,7 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
   ui.doneOn = null;
   dismissToast();
   if (task) {
-    const preset = presetForFrequency(task.frequency);
+    const frequency = frequencyFormValue(task.frequency);
     ui.sheet = {
       mode: "edit",
       homeId,
@@ -896,9 +968,8 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       roomId: roomId || "__new",
       newRoomName: "",
       name: task.name,
-      preset,
-      every: task.frequency?.every ? String(task.frequency.every) : "2",
-      unit: ["days", "weeks", "months"].includes(task.frequency?.unit) ? task.frequency.unit : "weeks",
+      every: frequency.every,
+      unit: frequency.unit,
       lastDone: lastDoneInputValue(task),
       error: "",
     };
@@ -910,8 +981,7 @@ function openTaskSheet({ homeId, task = null, roomId = "" }) {
       roomId: roomId || "__new",
       newRoomName: "",
       name: "",
-      preset: "visit",
-      every: "2",
+      every: "1",
       unit: "weeks",
       lastDone: "",
       error: "",
@@ -1094,9 +1164,40 @@ async function handleClick(event) {
     showToast({ message: "Undone." });
     return;
   }
+  if (action === "open-room") {
+    ui.menu = null;
+    const result = await repo.openRoom(button.dataset.home, button.dataset.room);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't open that room." });
+      return;
+    }
+    render({ scroll: "top" });
+    return;
+  }
+  if (action === "show-rooms") {
+    ui.menu = null;
+    const result = await repo.showRooms(homeId);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't open the rooms." });
+      return;
+    }
+    render({ scroll: "top" });
+    return;
+  }
+  if (action === "show-visit") {
+    ui.menu = null;
+    const result = await repo.showVisitOverview(homeId);
+    if (!result.ok) {
+      showToast({ message: result.error || "Couldn't open what's due." });
+      return;
+    }
+    render({ scroll: "top" });
+    return;
+  }
   if (action === "add-task") {
     const home = repo.homeById(homeId);
-    openTaskSheet({ homeId, roomId: home?.rooms[0]?.id || "__new" });
+    const roomId = button.dataset.room || home?.rooms[0]?.id || "__new";
+    openTaskSheet({ homeId, roomId });
     return;
   }
   if (action === "edit-task") {
@@ -1158,6 +1259,12 @@ async function handleClick(event) {
       showToast({ message: result.error || "Couldn't delete that task." });
       return;
     }
+    const view = repo.getState().view;
+    if (view.screen === "room") {
+      const home = repo.homeById(view.homeId);
+      const stillThere = home?.rooms.some((room) => room.id === view.roomId);
+      if (!stillThere) await repo.showRooms(target.homeId);
+    }
     showToast({ message: "Task deleted." });
     return;
   }
@@ -1200,8 +1307,9 @@ async function handleSubmit(event) {
   }
   if (event.target.id === "task-form") {
     const data = new FormData(event.target);
-    const preset = String(data.get("preset") || "visit");
-    const frequency = frequencyFromPreset(preset, data.get("every"), data.get("unit"));
+    const everyRaw = String(data.get("every") ?? "");
+    const unitRaw = String(data.get("unit") || "");
+    const frequencyResult = readFrequency(everyRaw, unitRaw);
     const roomId = String(data.get("roomId") || ui.sheet?.roomId || "__new");
     const lastDoneRaw = String(data.get("lastDone") || "");
     const parsed = parseDateInput(lastDoneRaw);
@@ -1211,28 +1319,39 @@ async function handleSubmit(event) {
       name: String(data.get("name") || ""),
       roomId,
       newRoomName: String(data.get("newRoomName") || ""),
-      preset,
-      every: String(data.get("every") || "2"),
-      unit: String(data.get("unit") || "weeks"),
+      every: everyRaw,
+      unit: unitRaw,
       lastDone: lastDoneRaw,
     };
+    if (!frequencyResult.ok) {
+      ui.sheet = { ...draft, error: frequencyResult.error };
+      render({ focus: frequencyResult.error.startsWith("Choose") ? "unit" : "every" });
+      return;
+    }
     if (!parsed.ok || future) {
       ui.sheet = { ...draft, error: future ? "Choose today or an earlier date." : parsed.error };
       render({ focus: "last-done" });
       return;
     }
-    const result = await repo.saveTask(ui.sheet.homeId, {
+    const homeId = ui.sheet.homeId;
+    const result = await repo.saveTask(homeId, {
       taskId: ui.sheet.taskId,
       roomId,
       newRoomName: data.get("newRoomName"),
       name: data.get("name"),
-      frequency,
+      frequency: frequencyResult.frequency,
       lastDone: parsed.date,
     });
     if (!result.ok) {
       ui.sheet = { ...draft, error: result.error };
-      render({ focus: result.error?.includes("date") ? "last-done" : "task-name" });
+      const dateError = result.error?.includes("date") || result.error?.includes("earlier");
+      render({ focus: dateError ? "last-done" : "task-name" });
       return;
+    }
+    const found = findTaskInHome(homeId, result.taskId);
+    const screen = repo.getState().view.screen;
+    if (found && (screen === "home" || (screen === "room" && found.room.id !== repo.getState().view.roomId))) {
+      await repo.openRoom(homeId, found.room.id);
     }
     ui.scrollToId = `task-${result.taskId}`;
     ui.sheet = null;
@@ -1291,10 +1410,6 @@ function handleChange(event) {
     const field = document.getElementById("new-room-field");
     if (field) field.hidden = target.value !== "__new";
     return;
-  }
-  if (target.name === "preset") {
-    const custom = document.getElementById("custom-frequency");
-    if (custom) custom.hidden = target.value !== "custom";
   }
   if (target.dataset?.dateHint) writeDateHint(target);
 }

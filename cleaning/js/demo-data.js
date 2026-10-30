@@ -18,9 +18,10 @@ export function buildSeed(now = new Date()) {
     role: account.role,
   });
 
-  const visit = { unit: "visit" };
+  const visit = { every: 1, unit: "visit" };
   const weeks = (every) => ({ unit: "weeks", every });
   const months = (every) => ({ unit: "months", every });
+  const years = (every) => ({ unit: "years", every });
 
   const task = (id, name, frequency, completion) => ({
     id,
@@ -84,7 +85,10 @@ export function buildSeed(now = new Date()) {
           {
             id: "room_helen_hall",
             name: "Hall",
-            tasks: [task("task_helen_hall", "Hoover the hall", visit, by(helen, 0))],
+            tasks: [
+              task("task_helen_hall", "Hoover the hall", visit, by(helen, 0)),
+              task("task_helen_alarm", "Test the smoke alarm", years(1), by(priya, 30)),
+            ],
           },
         ],
       },

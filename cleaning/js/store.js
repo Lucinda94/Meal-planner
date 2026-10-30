@@ -1,7 +1,7 @@
 import { STATE_VERSION, STORAGE_KEY } from "./config.js";
 import { buildSeed } from "./demo-data.js";
 import { normaliseWeekday, startOfDay } from "./dates.js";
-import { latestCompletion, normaliseFrequency } from "./dueness.js";
+import { canonicalFrequency, isCanonicalFrequency, latestCompletion, normaliseFrequency } from "./dueness.js";
 
 /**
  * DemoRepository is the only place that reads and writes data.
@@ -78,6 +78,23 @@ function looksLikeState(value) {
       value.view &&
       typeof value.view.accountId === "string",
   );
+}
+
+/** Rewrite task frequencies that were saved before number + unit, including every visit. */
+function migrateStoredFrequencies(value) {
+  let changed = false;
+  for (const home of value.homes || []) {
+    for (const room of home.rooms || []) {
+      for (const task of room.tasks || []) {
+        const next = canonicalFrequency(task.frequency);
+        if (!isCanonicalFrequency(task.frequency, next)) {
+          task.frequency = next;
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed;
 }
 
 export function createDemoRepository(options = {}) {
@@ -226,6 +243,7 @@ export function createDemoRepository(options = {}) {
           const parsed = JSON.parse(raw);
           if (looksLikeState(parsed)) {
             state = parsed;
+            if (migrateStoredFrequencies(state)) persist();
             return state;
           }
         }
@@ -285,7 +303,36 @@ export function createDemoRepository(options = {}) {
     async openHome(homeId) {
       const home = homeById(homeId);
       if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
-      state.view = { ...state.view, screen: "home", homeId: home.id };
+      state.view = { accountId: state.view.accountId, screen: "home", homeId: home.id, roomId: null };
+      persist();
+      return { ok: true };
+    },
+
+    async openRoom(homeId, roomId) {
+      const home = homeById(homeId);
+      if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
+      const room = (home.rooms || []).find((item) => item.id === roomId);
+      if (!room) return { ok: false, error: "That room is no longer there." };
+      state.view = { accountId: state.view.accountId, screen: "room", homeId: home.id, roomId: room.id };
+      persist();
+      return { ok: true };
+    },
+
+    async showRooms(homeId) {
+      const home = homeById(homeId);
+      if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
+      state.view = { accountId: state.view.accountId, screen: "home", homeId: home.id, roomId: null };
+      persist();
+      return { ok: true };
+    },
+
+    /** The cross-room due list. Cleaners use it; customers stay on their rooms. */
+    async showVisitOverview(homeId) {
+      const home = homeById(homeId);
+      const account = currentAccount();
+      if (!canAccess(home)) return { ok: false, error: "That home isn't on this account." };
+      if (account.role !== "cleaner") return { ok: false, error: "That list is for the cleaner." };
+      state.view = { accountId: account.id, screen: "visit", homeId: home.id, roomId: null };
       persist();
       return { ok: true };
     },
@@ -493,17 +540,17 @@ export function createDemoRepository(options = {}) {
       if (existing) return { ok: false, error: "This home already has tasks." };
       const starter = [
         ["Kitchen", [
-          ["Wipe the worktops and hob", { unit: "visit" }],
-          ["Hoover and mop the floor", { unit: "visit" }],
+          ["Wipe the worktops and hob", { every: 1, unit: "visit" }],
+          ["Hoover and mop the floor", { every: 1, unit: "visit" }],
           ["Clean the oven", { unit: "months", every: 3 }],
         ]],
         ["Bathroom", [
-          ["Clean the bathroom", { unit: "visit" }],
+          ["Clean the bathroom", { every: 1, unit: "visit" }],
           ["Change the towels", { unit: "weeks", every: 2 }],
         ]],
         ["Bedroom", [
           ["Change the bedding", { unit: "weeks", every: 2 }],
-          ["Hoover", { unit: "visit" }],
+          ["Hoover", { every: 1, unit: "visit" }],
         ]],
       ];
       home.rooms = starter.map(([roomName, tasks]) => ({

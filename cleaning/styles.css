@@ -82,8 +82,7 @@ textarea {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible,
-.choice:focus-within {
+textarea:focus-visible {
   outline: 3px solid var(--teal);
   outline-offset: 2px;
 }
@@ -141,8 +140,8 @@ textarea:focus-visible,
 .field select,
 .field input,
 .field textarea,
-.custom-row input,
-.custom-row select {
+.frequency-row input,
+.frequency-row select {
   display: block;
   width: 100%;
   margin-top: 6px;
@@ -307,7 +306,7 @@ main {
 .row,
 .page-actions,
 .sheet-actions,
-.custom-row {
+.frequency-row {
   display: flex;
   gap: 8px;
 }
@@ -735,40 +734,51 @@ fieldset {
 
 legend {
   font-weight: 700;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
-.choice {
-  display: flex;
+.frequency-row {
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  margin: 8px 0;
-  padding: 8px 12px;
-  border: 1.5px solid var(--line);
-  border-radius: 14px;
-  background: white;
-  font-weight: 600;
 }
 
-.choice:has(input:checked) {
-  border-color: var(--teal);
-  background: var(--teal-soft);
+.frequency-prefix {
+  flex: none;
+  font-weight: 700;
 }
 
-.choice input {
-  width: 22px;
-  height: 22px;
-  accent-color: var(--teal);
+.frequency-row .field {
+  margin: 0;
+  min-width: 0;
 }
 
-.custom-row {
-  align-items: end;
+.frequency-every {
+  flex: 0 0 5.5rem;
+  width: 5.5rem;
 }
 
-.custom-row .field {
-  flex: 1;
+.frequency-unit {
+  flex: 1 1 auto;
+}
+
+.frequency-row input,
+.frequency-row select {
   margin-top: 0;
+}
+
+.frequency-every input {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rooms-heading {
+  margin: 18px 0 10px;
+}
+
+.visit-card {
+  margin: 4px 0 14px;
+  background: var(--teal-soft);
+  border: 1.5px solid var(--teal);
+  box-shadow: none;
 }
 
 .backdrop {
