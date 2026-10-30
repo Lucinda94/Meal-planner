@@ -117,6 +117,36 @@
         <div class="form-scroll">
           <h2 id="recipe-form-title">Add recipe</h2>
           <p id="recipe-form-error" class="form-error" role="alert" hidden></p>
+          <div id="import-panel" class="import-panel">
+            <h3>Import from a link</h3>
+            <p class="import-hint">Paste a recipe page link. You can change anything before you save.</p>
+            <label class="field" for="import-url">
+              Recipe link
+              <input
+                id="import-url"
+                name="import-url"
+                type="text"
+                inputmode="url"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                enterkeyhint="go"
+                placeholder="https://…"
+              />
+            </label>
+            <button type="button" class="btn primary" id="import-link">Fill in from link</button>
+            <button type="button" class="btn ghost import-paste-toggle" id="import-show-paste">Paste the caption instead</button>
+            <p id="import-status" class="import-status" role="status" hidden></p>
+            <div id="import-fallback" hidden>
+              <label class="field" for="import-text">
+                Paste the caption or recipe text
+                <textarea id="import-text" name="import-text" rows="6" placeholder="Ingredients and method from the post"></textarea>
+              </label>
+              <button type="button" class="btn ghost" id="import-text-btn">Sort into the form</button>
+            </div>
+          </div>
+          <img id="recipe-photo" class="recipe-photo" alt="" referrerpolicy="no-referrer" hidden />
           <label class="field" for="recipe-name">
             Recipe name (required)
             <input id="recipe-name" name="recipe-name" type="text" required aria-required="true" autocomplete="off" autocapitalize="sentences" enterkeyhint="next" />
@@ -127,15 +157,19 @@
           </label>
           <label class="field" for="recipe-ingredients">
             Ingredients
-            <textarea id="recipe-ingredients" name="recipe-ingredients" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One ingredient per line, or separated by commas"></textarea>
+            <textarea id="recipe-ingredients" name="recipe-ingredients" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One ingredient per line. Or, on a single line, separated by commas"></textarea>
           </label>
           <label class="field" for="recipe-optional">
             Optional extras
             <textarea id="recipe-optional" name="recipe-optional" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One per line, or separated by commas"></textarea>
           </label>
+          <label class="field" id="recipe-method-field" for="recipe-method">
+            Method
+            <textarea id="recipe-method" name="recipe-method" rows="6" autocomplete="off" placeholder="Steps, timing, or anything you want to remember"></textarea>
+          </label>
           <label class="field" for="recipe-notes">
             Notes
-            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off"></textarea>
+            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off" placeholder="Anything else to remember"></textarea>
           </label>
         </div>
         <div class="form-actions">
