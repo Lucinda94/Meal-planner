@@ -21,6 +21,14 @@ import {
   resolveAppBase,
   tagBaseRecipes,
 } from "./planner.js";
+import {
+  composeImportedNotes,
+  corsProxyUrls,
+  extractRecipe,
+  isSocialRecipeUrl,
+  normaliseRecipeUrl,
+  parseRecipeText,
+} from "./import-recipe.js";
 
 const STORAGE_KEY = "meal-planner.v1";
 const WEEK_FIELDS = ["name", "whose", "ingredients"];
@@ -44,6 +52,8 @@ const state = {
   editingId: null,
   pendingBackup: null,
   formReturn: null,
+  importRun: 0,
+  importSourceUrl: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -526,6 +536,25 @@ function bindChrome() {
     renderShopping();
   });
   $("#add-recipe").addEventListener("click", () => openRecipeForm(null, $("#add-recipe")));
+  $("#import-link").addEventListener("click", importFromLink);
+  $("#import-text-btn").addEventListener("click", importFromText);
+  $("#import-show-paste").addEventListener("click", () => {
+    $("#import-fallback").hidden = false;
+    $("#import-show-paste").hidden = true;
+    if ($("#import-status").hidden) {
+      setImportStatus("Paste the caption or recipe text and we'll sort it into the form.", "");
+    }
+    $("#import-text").focus();
+  });
+  $("#import-url").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      importFromLink();
+    }
+  });
+  $("#recipe-photo").addEventListener("error", () => {
+    $("#recipe-photo").hidden = true;
+  });
   $("#recipe-form").addEventListener("submit", saveRecipeForm);
   $("#recipe-cancel").addEventListener("click", closeRecipeForm);
   $("#recipe-delete").addEventListener("click", () => {
@@ -547,6 +576,7 @@ function bindChrome() {
   });
   $("#confirm-restore").addEventListener("click", confirmRestore);
   $("#recipe-dialog").addEventListener("close", () => {
+    cancelImport();
     if (state.formReturn) {
       state.formReturn.focus();
       state.formReturn = null;
@@ -857,13 +887,18 @@ function openRecipeForm(recipe, returnFocus) {
   $("#recipe-ingredients").value = recipe ? recipe.ingredients.join("\n") : "";
   $("#recipe-optional").value = recipe ? recipe.optional.join("\n") : "";
   $("#recipe-notes").value = recipe ? recipe.notes : "";
+  resetImportPanel();
+  $("#import-panel").hidden = Boolean(recipe);
+  $("#recipe-method-field").hidden = Boolean(recipe);
   const error = $("#recipe-form-error");
   error.hidden = true;
   error.textContent = "";
   $("#recipe-delete").hidden = !recipe;
   const dialog = $("#recipe-dialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
-  $("#recipe-name").focus();
+  // Don't focus a field when adding. On an iPhone that opens the keyboard
+  // and hides the import box before she has seen it.
+  if (recipe) $("#recipe-name").focus();
 }
 
 function closeRecipeForm() {
@@ -886,7 +921,7 @@ function saveRecipeForm(event) {
     whose: $("#recipe-whose").value.trim(),
     ingredients: parseIngredientText($("#recipe-ingredients").value),
     optional: parseIngredientText($("#recipe-optional").value),
-    notes: $("#recipe-notes").value.trim(),
+    notes: combinedRecipeNotes(),
   };
   if (state.editingId) {
     const onSheet = state.editingId.startsWith("csv:") || state.baseRecipes.some((recipe) => recipe.id === state.editingId);
@@ -973,6 +1008,176 @@ function confirmRestore() {
   for (const day of DAYS) paintDay(day.id);
   renderRecipes();
   renderShopping();
+}
+
+function combinedRecipeNotes() {
+  const method = $("#recipe-method-field").hidden ? "" : $("#recipe-method").value.trim();
+  const notes = $("#recipe-notes").value.trim();
+  return [method, notes].filter(Boolean).join("\n\n");
+}
+
+function cancelImport() {
+  state.importRun += 1;
+  state.importAbort?.abort();
+  state.importAbort = null;
+}
+
+function resetImportPanel() {
+  cancelImport();
+  state.importSourceUrl = "";
+  $("#import-url").value = "";
+  $("#import-text").value = "";
+  $("#import-fallback").hidden = true;
+  $("#import-show-paste").hidden = false;
+  $("#import-link").disabled = false;
+  $("#import-link").textContent = "Fill in from link";
+  $("#recipe-method").value = "";
+  $("#recipe-method").rows = 6;
+  const photo = $("#recipe-photo");
+  photo.hidden = true;
+  photo.removeAttribute("src");
+  photo.alt = "";
+  setImportStatus("", "");
+}
+
+function setImportStatus(message, tone) {
+  const status = $("#import-status");
+  status.hidden = !message;
+  status.textContent = message || "";
+  status.className = tone === "error" ? "import-status is-error" : tone === "ok" ? "import-status is-ok" : "import-status";
+}
+
+function showPasteBox(message) {
+  $("#import-fallback").hidden = false;
+  $("#import-show-paste").hidden = true;
+  setImportStatus(message, "error");
+  $("#import-text").focus();
+}
+
+function applyImportedRecipe(recipe) {
+  if (recipe.name) $("#recipe-name").value = recipe.name;
+  if (recipe.ingredients.length) $("#recipe-ingredients").value = recipe.ingredients.join("\n");
+  const method = composeImportedNotes(recipe);
+  if (method) {
+    const field = $("#recipe-method");
+    field.value = method;
+    field.rows = Math.min(14, Math.max(6, method.split("\n").length));
+  }
+  const photo = $("#recipe-photo");
+  if (recipe.image && /^https?:\/\//i.test(recipe.image)) {
+    photo.alt = recipe.name ? `Photo of ${recipe.name}` : "Recipe photo";
+    photo.hidden = false;
+    photo.src = recipe.image;
+  } else {
+    photo.hidden = true;
+    photo.removeAttribute("src");
+  }
+  const error = $("#recipe-form-error");
+  error.hidden = true;
+  error.textContent = "";
+  $("#recipe-name").scrollIntoView({ block: "center", behavior: "auto" });
+}
+
+async function importFromLink() {
+  state.importAbort?.abort();
+  const run = ++state.importRun;
+  const controller = new AbortController();
+  state.importAbort = controller;
+  const raw = $("#import-url").value;
+  const normalised = normaliseRecipeUrl(raw);
+  if (!normalised) {
+    showPasteBox(raw.trim()
+      ? "That doesn't look like a web link. Paste the recipe text below, or include the full address."
+      : "Paste a recipe link first, or paste the recipe text below.");
+    return;
+  }
+  $("#import-url").value = normalised;
+  state.importSourceUrl = normalised;
+  if (isSocialRecipeUrl(normalised)) {
+    showPasteBox("Facebook, Instagram and TikTok can't be opened from here. Paste the caption below and we'll sort it into the form.");
+    return;
+  }
+
+  const button = $("#import-link");
+  button.disabled = true;
+  button.textContent = "Reading the link…";
+  setImportStatus("Reading that link…", "");
+  $("#import-fallback").hidden = true;
+  $("#import-show-paste").hidden = false;
+  try {
+    const recipe = await fetchImportedRecipe(normalised, controller.signal, () => run !== state.importRun);
+    if (run !== state.importRun) return;
+    if (!recipe) {
+      showPasteBox("No recipe was found on that page. Paste the recipe text below if you have it.");
+      return;
+    }
+    applyImportedRecipe(recipe);
+    setImportStatus("Filled in from the link. Check it, then save. Quantities are kept, so those lines usually land under Other on the shopping list.", "ok");
+  } catch {
+    if (run !== state.importRun) return;
+    showPasteBox("That link couldn't be read from here. Paste the recipe text below and we'll sort it into the form.");
+  } finally {
+    if (run === state.importRun) {
+      button.disabled = false;
+      button.textContent = "Fill in from link";
+    }
+  }
+}
+
+function importFromText() {
+  const parsed = parseRecipeText($("#import-text").value, { loose: true });
+  if (!parsed || (!parsed.name && parsed.ingredients.length === 0 && !parsed.method)) {
+    setImportStatus("That text didn't look like a recipe. You can type the name and ingredients yourself.", "error");
+    return;
+  }
+  applyImportedRecipe({ ...parsed, sourceUrl: state.importSourceUrl || "" });
+  const useful = parsed.ingredients.length >= 2 || (parsed.ingredients.length >= 1 && parsed.method);
+  setImportStatus(
+    useful
+      ? "Sorted the text into the form. Check it, then save."
+      : "Sorted what we could. Check it and fill in anything missing, then save.",
+    "ok",
+  );
+}
+
+async function fetchImportedRecipe(pageUrl, parentSignal, cancelled) {
+  let sawPage = false;
+  for (const proxyUrl of corsProxyUrls(pageUrl)) {
+    if (cancelled() || parentSignal.aborted) return null;
+    try {
+      const response = await fetch(proxyUrl, {
+        signal: timeoutSignal(parentSignal, 9000),
+        credentials: "omit",
+        cache: "no-store",
+        headers: { Accept: "text/html, text/plain, */*" },
+      });
+      if (!response.ok) continue;
+      const body = await response.text();
+      if (cancelled()) return null;
+      const recipe = extractRecipe(body, pageUrl);
+      if (recipe && (recipe.ingredients.length > 0 || recipe.method)) return recipe;
+      if (body.length > 1500 && /<html[\s>]|markdown content|recipeingredient/i.test(body)) sawPage = true;
+    } catch (error) {
+      if (parentSignal.aborted || cancelled()) throw error;
+    }
+  }
+  if (!sawPage) throw new Error("unread");
+  return null;
+}
+
+function timeoutSignal(parent, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  const onAbort = () => controller.abort();
+  if (parent) {
+    if (parent.aborted) controller.abort();
+    else parent.addEventListener("abort", onAbort, { once: true });
+  }
+  controller.signal.addEventListener("abort", () => {
+    clearTimeout(timer);
+    parent?.removeEventListener("abort", onAbort);
+  }, { once: true });
+  return controller.signal;
 }
 
 function registerServiceWorker() {

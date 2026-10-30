@@ -228,7 +228,12 @@ test("phone edits layer on top of the sheet and keep a stable id", () => {
 });
 
 test("ingredient box accepts lines or commas, and a backup CSV round-trips", () => {
-  assert.deepEqual(parseIngredientText(" chicken, chorizo \n pesto "), ["chicken", "chorizo", "pesto"]);
+  assert.deepEqual(parseIngredientText("chicken, chorizo, pesto"), ["chicken", "chorizo", "pesto"]);
+  assert.deepEqual(parseIngredientText(" chicken \n chorizo \n pesto "), ["chicken", "chorizo", "pesto"]);
+  assert.deepEqual(
+    parseIngredientText("1 onion, finely chopped\n2 garlic cloves"),
+    ["1 onion, finely chopped", "2 garlic cloves"],
+  );
   const base = tagBaseRecipes(recipes);
   const csvText = recipesToCsv(base);
   const again = parseRecipes(csvText);

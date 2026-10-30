@@ -1,11 +1,12 @@
 /* Offline cache for the meal planner. Network first, so a new recipes.csv shows up when she is online. */
-const CACHE = "meal-planner-v2";
+const CACHE = "meal-planner-v3";
 const BASE = new URL("./", self.location);
 const FILES = [
   "index.html",
   "styles.css",
   "js/app.js",
   "js/planner.js",
+  "js/import-recipe.js",
   "recipes.csv",
   "manifest.json",
   "favicon-32.png",

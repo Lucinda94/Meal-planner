@@ -351,12 +351,16 @@ function splitList(value) {
     .filter(Boolean);
 }
 
-/** Ingredients typed in the form: one per line, or separated by commas. */
+/**
+ * Ingredients typed in the form.
+ * Several lines stay as one ingredient each, so "1 onion, finely chopped" is kept whole.
+ * A single line with no line breaks is split on commas.
+ */
 export function parseIngredientText(value) {
-  return String(value)
-    .split(/[\n,]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const text = String(value).replace(/\r\n/g, "\n").trim();
+  if (!text) return [];
+  const parts = text.includes("\n") ? text.split("\n") : text.split(",");
+  return parts.map((part) => part.trim()).filter(Boolean);
 }
 
 export function createRecipeId() {
