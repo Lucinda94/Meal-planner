@@ -49,6 +49,11 @@ export function addMonths(date, months) {
   return copy;
 }
 
+/** Calendar years. 29 Feb lands on 28 Feb when the target year is not a leap year. */
+export function addYears(date, years) {
+  return addMonths(date, years * 12);
+}
+
 export function daysBetween(from, to) {
   const ms = startOfDay(to).getTime() - startOfDay(from).getTime();
   return Math.round(ms / 86400000);

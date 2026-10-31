@@ -96,7 +96,7 @@ test("profile describes the cleaner and the customer from the same homes", () =>
 
 test("the service worker cache includes the tab bar and has been bumped", () => {
   const source = readFileSync(new URL("../sw.js", import.meta.url), "utf8");
-  assert.match(source, /const CACHE = "tidy-together-v3"/);
+  assert.match(source, /const CACHE = "tidy-together-v4"/);
   assert.match(source, /js\/nav\.js/);
-  assert.doesNotMatch(source, /tidy-together-v2/);
+  assert.doesNotMatch(source, /tidy-together-v3/);
 });
