@@ -464,6 +464,31 @@ function listsEqual(left, right) {
   return left.every((item, index) => item === right[index]);
 }
 
+/**
+ * Drop phone edits that are already in recipes.csv, so a shared save does not
+ * show the same dinner twice once the file has caught up.
+ * An edit that is not in the file yet is kept.
+ */
+export function pruneSyncedOverlay(baseRecipes, overlay) {
+  const clean = normaliseOverlay(overlay);
+  const base = Array.isArray(baseRecipes) ? baseRecipes : [];
+  const landed = (recipe) => base.some((row) => sameContent(row, recipe));
+  const edited = {};
+  for (const [id, edit] of Object.entries(clean.edited)) {
+    const row = base.find((recipe) => recipe.id === id);
+    if (row) {
+      if (!sameContent(row, edit)) edited[id] = edit;
+      continue;
+    }
+    if (!landed(edit)) edited[id] = edit;
+  }
+  return {
+    added: clean.added.filter((recipe) => !landed(recipe)),
+    edited,
+    deleted: clean.deleted.filter((id) => base.some((recipe) => recipe.id === id)),
+  };
+}
+
 function sameContent(left, right) {
   return left.name === right.name
     && left.whose === right.whose

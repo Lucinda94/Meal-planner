@@ -16,6 +16,7 @@ import {
   overlayFromBackup,
   parseIngredientText,
   parseRecipes,
+  pruneSyncedOverlay,
   splitNotedMethod,
   recipesToCsv,
   relinkWeek,
@@ -31,6 +32,7 @@ import {
 } from "./recipe-fill.js";
 
 const STORAGE_KEY = "meal-planner.v1";
+const PASSCODE_KEY = "meal-planner.passcode";
 const WEEK_FIELDS = ["name", "whose", "ingredients"];
 const RECIPE_FIELDS = ["name", "whose", "ingredients", "optional", "info", "method", "notes"];
 
@@ -53,6 +55,9 @@ const state = {
   pendingBackup: null,
   formReturn: null,
   bringRun: 0,
+  publishEndpoint: "",
+  pendingCsv: "",
+  shareRun: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -101,6 +106,7 @@ function boot(recipes) {
   state.recipes = applyRecipeOverlay(state.baseRecipes, state.overlay);
   const storedWeek = saved ? (coerceWeek(saved.week) || emptyWeek()) : defaultWeek();
   state.week = linkWeek(storedWeek, state.recipes);
+  settleSharedRecipes();
   if (saved) {
     state.includeOptional = saved.includeOptional === true;
     state.includeSpices = saved.includeSpices === true;
@@ -572,6 +578,14 @@ function bindChrome() {
     $("#restore-dialog").close();
   });
   $("#confirm-restore").addEventListener("click", confirmRestore);
+  $("#share-skip").addEventListener("click", skipShare);
+  $("#share-send").addEventListener("click", sendShare);
+  $("#share-passcode").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendShare();
+    }
+  });
   $("#recipe-dialog").addEventListener("close", () => {
     cancelBringIn();
     if (state.formReturn) {
@@ -975,6 +989,7 @@ function saveRecipeForm(event) {
   }
   closeRecipeForm();
   refreshFromOverlay();
+  shareRecipes();
 }
 
 function confirmDeleteRecipe() {
@@ -993,6 +1008,7 @@ function confirmDeleteRecipe() {
   state.editingId = null;
   closeRecipeForm();
   refreshFromOverlay();
+  shareRecipes();
 }
 
 function downloadBackup() {
@@ -1046,6 +1062,7 @@ function confirmRestore() {
   for (const day of DAYS) paintDay(day.id);
   renderRecipes();
   renderShopping();
+  shareRecipes();
 }
 
 const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js";
@@ -1315,6 +1332,150 @@ function timeoutSignal(parent, ms) {
   return controller.signal;
 }
 
+function settleSharedRecipes() {
+  const pruned = pruneSyncedOverlay(state.baseRecipes, state.overlay);
+  const before = JSON.stringify(normaliseOverlay(state.overlay));
+  const after = JSON.stringify(pruned);
+  if (before === after) return;
+  const previous = state.recipes;
+  state.overlay = pruned;
+  state.recipes = applyRecipeOverlay(state.baseRecipes, state.overlay);
+  state.week = relinkWeek(state.week, previous, state.recipes);
+  saveState();
+}
+
+function loadPasscode() {
+  try {
+    return localStorage.getItem(PASSCODE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function savePasscode(value) {
+  try {
+    if (value) localStorage.setItem(PASSCODE_KEY, value);
+    else localStorage.removeItem(PASSCODE_KEY);
+  } catch {
+    // The passcode can still be typed again next time.
+  }
+}
+
+async function readPublishEndpoint(response) {
+  if (!response || !response.ok) return "";
+  try {
+    const payload = await response.json();
+    const endpoint = payload && typeof payload.endpoint === "string" ? payload.endpoint.trim() : "";
+    if (!endpoint) return "";
+    const url = new URL(endpoint);
+    const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+    if (url.protocol === "https:" || (url.protocol === "http:" && local)) return url.href;
+  } catch {
+    // A missing or broken publish.json means sharing stays off.
+  }
+  return "";
+}
+
+function setShareNotice(message, tone) {
+  const notice = $("#share-notice");
+  notice.hidden = !message;
+  notice.textContent = message || "";
+  notice.className = tone === "ok" ? "notice is-ok" : "notice";
+}
+
+function shareRecipes() {
+  if (state.recipes.length === 0) {
+    setShareNotice("Saved on this phone. The shared list was left as it is, because this phone has no recipes to send.", "");
+    return;
+  }
+  const csv = recipesToCsv(state.recipes);
+  if (!state.publishEndpoint) {
+    setShareNotice("Saved on this phone. Sharing with your other phones isn't set up yet, so this stays here.", "");
+    return;
+  }
+  const passcode = loadPasscode();
+  if (!passcode) {
+    state.pendingCsv = csv;
+    openShareDialog();
+    return;
+  }
+  publishCsv(csv, passcode);
+}
+
+function openShareDialog() {
+  $("#share-error").hidden = true;
+  $("#share-error").textContent = "";
+  $("#share-passcode").value = "";
+  const dialog = $("#share-dialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  $("#share-passcode").focus();
+}
+
+function skipShare() {
+  state.pendingCsv = "";
+  const dialog = $("#share-dialog");
+  if (dialog.open) dialog.close();
+  setShareNotice("Saved on this phone only.", "");
+}
+
+function sendShare() {
+  const passcode = $("#share-passcode").value;
+  const error = $("#share-error");
+  if (!passcode.trim()) {
+    error.textContent = "Enter the shared passcode.";
+    error.hidden = false;
+    $("#share-passcode").focus();
+    return;
+  }
+  savePasscode(passcode);
+  const csv = state.pendingCsv || recipesToCsv(state.recipes);
+  state.pendingCsv = "";
+  const dialog = $("#share-dialog");
+  if (dialog.open) dialog.close();
+  publishCsv(csv, passcode);
+}
+
+async function publishCsv(csv, passcode) {
+  const run = ++state.shareRun;
+  setShareNotice("Sharing the recipes…", "");
+  try {
+    const response = await fetch(state.publishEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ passcode, csv }),
+      cache: "no-store",
+    });
+    if (run !== state.shareRun) return;
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (response.status === 401 || payload.error === "passcode") {
+      savePasscode("");
+      state.pendingCsv = csv;
+      setShareNotice("", "");
+      openShareDialog();
+      $("#share-error").textContent = "That passcode wasn't recognised. It's still saved on this phone.";
+      $("#share-error").hidden = false;
+      return;
+    }
+    if (response.status === 409 || payload.error === "conflict") {
+      setShareNotice("Saved on this phone. The shared list changed at the same time. Reload and share it again.", "");
+      return;
+    }
+    if (!response.ok || payload.ok !== true) {
+      setShareNotice("Saved on this phone. It couldn't be shared just now. Try again when you're online.", "");
+      return;
+    }
+    setShareNotice("Saved for everyone. Other phones will catch up once the site updates.", "ok");
+  } catch {
+    if (run !== state.shareRun) return;
+    setShareNotice("Saved on this phone. It couldn't be shared just now. Try again when you're online.", "");
+  }
+}
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   const register = () => {
@@ -1329,10 +1490,14 @@ function registerServiceWorker() {
 async function main() {
   const base = resolveAppBase(window.location.href);
   try {
-    const response = await fetch(new URL("recipes.csv", base));
+    const [response, publish] = await Promise.all([
+      fetch(new URL("recipes.csv", base)),
+      fetch(new URL("publish.json", base)).catch(() => null),
+    ]);
     if (!response.ok) throw new Error(String(response.status));
     const recipes = parseRecipes(await response.text());
     if (recipes.length === 0) throw new Error("empty");
+    state.publishEndpoint = await readPublishEndpoint(publish);
     boot(recipes);
   } catch {
     const mainEl = $("#panel-week");

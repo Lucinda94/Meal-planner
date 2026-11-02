@@ -1,0 +1,3 @@
+name = "meal-planner-recipes"
+main = "worker/recipe-publish.js"
+compatibility_date = "2026-11-02"
