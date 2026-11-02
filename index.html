@@ -117,6 +117,39 @@
         <div class="form-scroll">
           <h2 id="recipe-form-title">Add recipe</h2>
           <p id="recipe-form-error" class="form-error" role="alert" hidden></p>
+          <div id="bring-in" class="bring-in">
+            <h3>Bring a recipe in</h3>
+            <p class="bring-hint">Paste a link, or a photo of the recipe. You can correct it before you save.</p>
+            <label class="field" for="bring-url">
+              Recipe link
+              <input
+                id="bring-url"
+                name="bring-url"
+                type="text"
+                inputmode="url"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                enterkeyhint="go"
+                placeholder="https://…"
+              />
+            </label>
+            <div class="bring-actions">
+              <button type="button" class="btn primary" id="bring-link">Fill in from link</button>
+              <button type="button" class="btn ghost" id="bring-photo">Photo of a recipe</button>
+              <input id="bring-file" type="file" accept="image/*" hidden />
+            </div>
+            <button type="button" class="btn ghost bring-paste-toggle" id="bring-show-paste">Paste the words instead</button>
+            <p id="bring-status" class="bring-status" role="status" hidden></p>
+            <div id="bring-paste" hidden>
+              <label class="field" for="bring-text">
+                Paste the caption or recipe text
+                <textarea id="bring-text" name="bring-text" rows="6" placeholder="Ingredients and method, from the post or the page"></textarea>
+              </label>
+              <button type="button" class="btn ghost" id="bring-text-btn">Sort into the form</button>
+            </div>
+          </div>
           <label class="field" for="recipe-name">
             Recipe name (required)
             <input id="recipe-name" name="recipe-name" type="text" required aria-required="true" autocomplete="off" autocapitalize="sentences" enterkeyhint="next" />
@@ -127,7 +160,7 @@
           </label>
           <label class="field" for="recipe-ingredients">
             Ingredients
-            <textarea id="recipe-ingredients" name="recipe-ingredients" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One ingredient per line, or separated by commas"></textarea>
+            <textarea id="recipe-ingredients" name="recipe-ingredients" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One ingredient per line. Or, on a single line, separated by commas"></textarea>
           </label>
           <label class="field" for="recipe-optional">
             Optional extras
@@ -135,7 +168,7 @@
           </label>
           <label class="field" for="recipe-notes">
             Notes
-            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off"></textarea>
+            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off" placeholder="Method, timing, or anything else"></textarea>
           </label>
         </div>
         <div class="form-actions">

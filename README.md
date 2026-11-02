@@ -31,7 +31,11 @@ The app always opens on the week plan.
 
 ## Change recipes on your phone
 
-On the **Recipes** tab, **Add recipe** and **Edit** use the same details as the sheet: name, whose recipe, ingredients, optional extras, and notes. Ingredients can be one per line, or separated by commas. **Delete recipe** asks before it removes a dinner, and takes it off the week plan too.
+On the **Recipes** tab, **Add recipe** and **Edit** use the same details as the sheet: name, whose recipe, ingredients, optional extras, and notes. Ingredients can be one per line (a comma stays inside the line), or, on a single line, separated by commas. **Delete recipe** asks before it removes a dinner, and takes it off the week plan too.
+
+**Add a recipe from a link or a photo.** On Add recipe, paste a link to a recipe page, or add a photo of a recipe. The form fills in the name, ingredients and method so you can correct them, then **Save recipe** stores it on this phone in the usual way. Facebook and Instagram usually cannot be read. Paste the caption, or add a photo, instead.
+
+A recipe added here stays on this phone, on top of the spreadsheet. Updating `recipes.csv` from the Google Sheet does not remove it. It is not written back to the sheet, so it will not appear on another phone unless you use **Back up my recipes** and **Restore from backup**.
 
 Those changes are saved on this phone, on top of `recipes.csv`. They stay put when you reload, and when the spreadsheet file is updated. A new ingredient is grouped on the shopping list when the app knows the aisle, and otherwise it goes under **Other**.
 
