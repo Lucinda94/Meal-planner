@@ -571,9 +571,36 @@ main {
   background: var(--sage-soft);
 }
 
+.recipe-info {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .notes {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.method-offer {
+  margin: 0 0 14px;
+  padding: 12px;
+  background: var(--accent-soft);
+  border-radius: 16px;
+}
+
+.method-offer p {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.method-offer .btn {
+  min-height: 44px;
 }
 
 .missing,

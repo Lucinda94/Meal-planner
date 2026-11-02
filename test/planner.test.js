@@ -19,6 +19,7 @@ import {
   recipesToCsv,
   relinkWeek,
   resolveAppBase,
+  splitNotedMethod,
   tagBaseRecipes,
 } from "../js/planner.js";
 
@@ -273,4 +274,50 @@ test("ingredient box accepts lines or commas, and a backup CSV round-trips", () 
   const week = { ...emptyWeek(), wed: previous.find((recipe) => recipe.name === "Spanish chicken").id };
   const relinked = relinkWeek(week, previous, next);
   assert.equal(relinked.wed, week.wed);
+});
+
+test("the sheet still loads when the Method column has not been added yet", () => {
+  const salmon = recipes.find((recipe) => recipe.name === "Sweet chilli salmon");
+  assert.equal(salmon.method, "");
+  assert.equal(salmon.info, "");
+  assert.match(salmon.notes, /Grill the salmon/);
+  const oldFile = [
+    "Recipe,Whose recipe,Ingredients,Optional extras,Notes",
+    "Soup,Mum,\"onions, stock\",,Simmer until soft.",
+  ].join("\n");
+  const parsed = parseRecipes(oldFile);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].method, "");
+  assert.equal(parsed[0].info, "");
+  assert.equal(parsed[0].notes, "Simmer until soft.");
+});
+
+test("Method is the column after Optional extras, and servings stay out of the steps", () => {
+  const file = `Recipe,Whose recipe,Ingredients,Optional extras,Method,Notes
+Pancakes,Cassie,"flour, eggs","lemon wedges","Makes 12
+Prep 10 mins
+
+1. Whisk.
+2. Fry.",Best on Sunday.
+`;
+  const parsed = parseRecipes(file);
+  assert.equal(parsed[0].info, "Makes 12\nPrep 10 mins");
+  assert.equal(parsed[0].method, "1. Whisk.\n2. Fry.");
+  assert.equal(parsed[0].notes, "Best on Sunday.");
+  const roundTrip = parseRecipes(recipesToCsv(parsed));
+  assert.equal(roundTrip[0].info, parsed[0].info);
+  assert.equal(roundTrip[0].method, parsed[0].method);
+  assert.equal(roundTrip[0].notes, parsed[0].notes);
+  assert.match(recipesToCsv(parsed), /Optional extras,Method,Notes/);
+});
+
+test("numbered steps can be lifted out of notes, and a plain comment is left alone", () => {
+  const lifted = splitNotedMethod("Makes 12\nPrep 10 mins\n\n1. Whisk the batter.\n2. Fry until golden.\n\nFrom: https://example.com/pancakes\nBest eaten warm.");
+  assert.deepEqual(lifted, {
+    info: "Makes 12\nPrep 10 mins\nFrom: https://example.com/pancakes",
+    method: "1. Whisk the batter.\n2. Fry until golden.",
+    notes: "Best eaten warm.",
+  });
+  assert.equal(splitNotedMethod("Use roasted tomatoes."), null);
+  assert.equal(splitNotedMethod("Grill the salmon with sweet chilli sauce. Serve with fries."), null);
 });

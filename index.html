@@ -166,9 +166,21 @@
             Optional extras
             <textarea id="recipe-optional" name="recipe-optional" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="One per line, or separated by commas"></textarea>
           </label>
+          <div id="method-offer" class="method-offer" hidden>
+            <p>These notes look like steps. They stay where they are until you move them.</p>
+            <button type="button" class="btn ghost" id="move-method">Move steps to Method</button>
+          </div>
+          <label class="field" for="recipe-info">
+            Serves and time
+            <textarea id="recipe-info" name="recipe-info" rows="2" autocomplete="off" placeholder="Makes 12 · Prep 10 mins"></textarea>
+          </label>
+          <label class="field" for="recipe-method">
+            Method
+            <textarea id="recipe-method" name="recipe-method" rows="6" autocomplete="off" placeholder="The steps"></textarea>
+          </label>
           <label class="field" for="recipe-notes">
             Notes
-            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off" placeholder="Method, timing, or anything else"></textarea>
+            <textarea id="recipe-notes" name="recipe-notes" rows="3" autocomplete="off" placeholder="Your own comments"></textarea>
           </label>
         </div>
         <div class="form-actions">

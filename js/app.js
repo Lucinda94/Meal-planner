@@ -16,6 +16,7 @@ import {
   overlayFromBackup,
   parseIngredientText,
   parseRecipes,
+  splitNotedMethod,
   recipesToCsv,
   relinkWeek,
   resolveAppBase,
@@ -31,7 +32,7 @@ import {
 
 const STORAGE_KEY = "meal-planner.v1";
 const WEEK_FIELDS = ["name", "whose", "ingredients"];
-const RECIPE_FIELDS = ["name", "whose", "ingredients", "optional", "notes"];
+const RECIPE_FIELDS = ["name", "whose", "ingredients", "optional", "info", "method", "notes"];
 
 let swallowNextClick = false;
 
@@ -538,6 +539,9 @@ function bindChrome() {
   $("#bring-photo").addEventListener("click", () => $("#bring-file").click());
   $("#bring-file").addEventListener("change", fillFromPhoto);
   $("#bring-text-btn").addEventListener("click", fillFromText);
+  $("#move-method").addEventListener("click", moveNotesToMethod);
+  $("#recipe-notes").addEventListener("input", refreshMethodOffer);
+  $("#recipe-method").addEventListener("input", refreshMethodOffer);
   $("#bring-show-paste").addEventListener("click", () => {
     showPasteBox("");
     $("#bring-text").focus();
@@ -718,6 +722,19 @@ function renderRecipes() {
       body.append(detailHeading("Optional extras"));
       body.append(pillList(recipe.optional, "optional"));
     }
+    if (recipe.info) {
+      const info = document.createElement("p");
+      info.className = "recipe-info";
+      info.textContent = recipe.info;
+      body.append(info);
+    }
+    if (recipe.method) {
+      body.append(detailHeading("Method"));
+      const method = document.createElement("p");
+      method.className = "notes";
+      method.textContent = recipe.method;
+      body.append(method);
+    }
     if (recipe.notes) {
       body.append(detailHeading("Notes"));
       const notes = document.createElement("p");
@@ -871,6 +888,24 @@ function renderShopping() {
   window.scrollTo(0, scrollY);
 }
 
+function refreshMethodOffer() {
+  const suggestion = splitNotedMethod($("#recipe-notes").value);
+  $("#method-offer").hidden = !(suggestion && !$("#recipe-method").value.trim());
+}
+
+function moveNotesToMethod() {
+  const suggestion = splitNotedMethod($("#recipe-notes").value);
+  if (!suggestion) return;
+  const info = $("#recipe-info");
+  if (!info.value.trim()) info.value = suggestion.info;
+  else if (suggestion.info) info.value = `${info.value.trim()}\n${suggestion.info}`;
+  const method = $("#recipe-method");
+  method.value = suggestion.method;
+  method.rows = Math.min(16, Math.max(6, suggestion.method.split("\n").length + 1));
+  $("#recipe-notes").value = suggestion.notes;
+  refreshMethodOffer();
+}
+
 function openRecipeForm(recipe, returnFocus) {
   state.editingId = recipe ? recipe.id : null;
   state.formReturn = returnFocus || null;
@@ -879,8 +914,12 @@ function openRecipeForm(recipe, returnFocus) {
   $("#recipe-whose").value = recipe ? recipe.whose : "";
   $("#recipe-ingredients").value = recipe ? recipe.ingredients.join("\n") : "";
   $("#recipe-optional").value = recipe ? recipe.optional.join("\n") : "";
+  $("#recipe-info").value = recipe ? recipe.info || "" : "";
+  $("#recipe-method").value = recipe ? recipe.method || "" : "";
+  $("#recipe-method").rows = 6;
   $("#recipe-notes").value = recipe ? recipe.notes : "";
   $("#recipe-notes").rows = 3;
+  refreshMethodOffer();
   resetBringIn();
   $("#bring-in").hidden = Boolean(recipe);
   const error = $("#recipe-form-error");
@@ -918,6 +957,8 @@ function saveRecipeForm(event) {
     whose: $("#recipe-whose").value.trim(),
     ingredients: parseIngredientText($("#recipe-ingredients").value),
     optional: parseIngredientText($("#recipe-optional").value),
+    info: $("#recipe-info").value.trim(),
+    method: $("#recipe-method").value.trim(),
     notes: $("#recipe-notes").value.trim(),
   };
   if (state.editingId) {
@@ -1065,11 +1106,18 @@ function applyFilledRecipe(recipe) {
     optional.value = recipe.optional.join("\n");
     optional.rows = Math.min(8, Math.max(3, recipe.optional.length));
   }
+  if (recipe.info) $("#recipe-info").value = recipe.info;
+  if (recipe.method) {
+    const method = $("#recipe-method");
+    method.value = recipe.method;
+    method.rows = Math.min(16, Math.max(6, recipe.method.split("\n").length + 1));
+  }
   if (recipe.notes) {
     const notes = $("#recipe-notes");
     notes.value = recipe.notes;
     notes.rows = Math.min(16, Math.max(3, recipe.notes.split("\n").length + 1));
   }
+  refreshMethodOffer();
   const error = $("#recipe-form-error");
   error.hidden = true;
   error.textContent = "";
@@ -1078,7 +1126,7 @@ function applyFilledRecipe(recipe) {
 
 function filledEnough(recipe) {
   if (!recipe) return false;
-  return Boolean(recipe.name) || recipe.ingredients.length > 0 || recipe.optional.length > 0 || Boolean(recipe.notes);
+  return Boolean(recipe.name) || recipe.ingredients.length > 0 || recipe.optional.length > 0 || Boolean(recipe.method) || Boolean(recipe.notes);
 }
 
 async function fillFromLink() {
@@ -1102,7 +1150,7 @@ async function fillFromLink() {
     const body = await fetchRecipePage(normalised, controller.signal);
     if (run !== state.bringRun) return;
     const recipe = body ? recipeFromDocument(body, normalised) : null;
-    if (!filledEnough(recipe) || (recipe.ingredients.length === 0 && !recipe.notes.includes("\n"))) {
+    if (!filledEnough(recipe) || (recipe.ingredients.length === 0 && !recipe.method)) {
       showPasteBox(social
         ? "Facebook and Instagram don't share the post with this page. Paste the caption below, or add a photo of the recipe."
         : "No recipe was found on that page. Paste the text below, or add a photo.");
@@ -1131,7 +1179,7 @@ function fillFromText() {
     return;
   }
   applyFilledRecipe(parsed);
-  const useful = parsed.ingredients.length >= 2 || (parsed.ingredients.length >= 1 && parsed.notes);
+  const useful = parsed.ingredients.length >= 2 || (parsed.ingredients.length >= 1 && parsed.method);
   setBringStatus(
     useful
       ? `Sorted the text into the form. Check it, then save.${QUANTITY_NOTE}`
@@ -1170,7 +1218,7 @@ async function fillFromPhoto(event) {
     const result = await recogniseImage(image);
     if (run !== state.bringRun) return;
     const parsed = recipeFromText(result?.data?.text || "", { loose: true });
-    if (!filledEnough(parsed) || (parsed.ingredients.length < 2 && !parsed.notes)) {
+    if (!filledEnough(parsed) || (parsed.ingredients.length < 2 && !parsed.method)) {
       showPasteBox("That photo didn't have enough recipe text. Try a clearer picture, paste the words, or type it in.");
       return;
     }

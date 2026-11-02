@@ -135,9 +135,8 @@ export function recipeFromText(raw, options = {}) {
 function accept(recipe, strict) {
   if (!recipe) return null;
   if (recipe.ingredients.length >= 2) return recipe;
-  const method = methodBody(recipe.notes);
-  if (recipe.ingredients.length >= 1 && method) return recipe;
-  if (!strict && (recipe.name || method)) return recipe;
+  if (recipe.ingredients.length >= 1 && recipe.method) return recipe;
+  if (!strict && (recipe.name || recipe.method)) return recipe;
   return null;
 }
 
@@ -154,7 +153,7 @@ function recipeFromHtml(html, pageUrl) {
   for (const block of blocks) collectRecipes(block, found);
   const recipes = found
     .map((node) => recipeFromSchema(node, pageUrl))
-    .filter((recipe) => recipe && (recipe.ingredients.length > 0 || methodBody(recipe.notes)));
+    .filter((recipe) => recipe && (recipe.ingredients.length > 0 || recipe.method));
   if (recipes.length === 0) return null;
   recipes.sort((a, b) => scoreRecipe(b) - scoreRecipe(a));
   const canonical = pageUrl ? recipes.find((recipe) => recipe.schemaUrl && samePage(recipe.schemaUrl, pageUrl)) : null;
@@ -198,18 +197,18 @@ function recipeFromCaption(html, pageUrl) {
 }
 
 function formRecipe(parts) {
-  const blocks = [];
   const timing = [parts.servings, parts.time].filter(Boolean);
-  if (timing.length) blocks.push(timing.join("\n"));
-  if (parts.method) blocks.push(parts.method);
-  if (parts.extraNotes) blocks.push(parts.extraNotes);
-  if (parts.sourceUrl) blocks.push(`From: ${parts.sourceUrl}`);
+  const info = [];
+  if (timing.length) info.push(timing.join(" · "));
+  if (parts.sourceUrl) info.push(`From: ${parts.sourceUrl}`);
   const recipe = {
     name: tidyName(parts.name),
     whose: tidyName(parts.whose),
     ingredients: (parts.ingredients || []).filter(Boolean),
     optional: (parts.optional || []).filter(Boolean),
-    notes: blocks.join("\n\n").trim(),
+    info: info.join("\n"),
+    method: String(parts.method || "").trim(),
+    notes: String(parts.extraNotes || "").trim(),
   };
   if (parts.schemaUrl) recipe.schemaUrl = parts.schemaUrl;
   return recipe;
@@ -315,7 +314,7 @@ function isRecipeType(type) {
 }
 
 function scoreRecipe(recipe) {
-  return recipe.ingredients.length * 5 + (methodBody(recipe.notes) ? 4 : 0) + (recipe.name ? 2 : 0);
+  return recipe.ingredients.length * 5 + (recipe.method ? 4 : 0) + (recipe.name ? 2 : 0);
 }
 
 function samePage(left, right) {
@@ -655,13 +654,6 @@ function looksLikeTitle(line) {
 
 function wordCount(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean).length;
-}
-
-function methodBody(notes) {
-  return String(notes || "")
-    .replace(/^From:\s+\S+\s*$/gim, "")
-    .replace(/^(?:Prep|Cook|Ready in|Makes|Serves|Yield)\b.*$/gim, "")
-    .trim();
 }
 
 function tidyName(value) {
