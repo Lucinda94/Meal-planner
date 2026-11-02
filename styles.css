@@ -799,12 +799,15 @@ dialog {
 }
 
 .recipe-dialog {
-  display: flex;
   flex-direction: column;
   width: min(480px, calc(100vw - 16px));
   height: min(760px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px));
   padding: 0;
   overflow: hidden;
+}
+
+.recipe-dialog[open] {
+  display: flex;
 }
 
 .recipe-dialog form {
@@ -873,6 +876,60 @@ dialog {
   font-weight: 600;
 }
 
+.bring-in {
+  margin: 0 0 16px;
+  padding: 12px;
+  background: var(--sage-soft);
+  border-radius: 16px;
+}
+
+.bring-in h3 {
+  margin: 0 0 4px;
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.bring-hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.bring-in .field {
+  margin-bottom: 10px;
+}
+
+.bring-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.bring-paste-toggle {
+  margin-top: 8px;
+}
+
+.bring-status {
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.bring-status.is-ok {
+  color: var(--sage);
+}
+
+.bring-status.is-error {
+  color: var(--accent-dark);
+}
+
+#bring-paste {
+  margin-top: 12px;
+}
+
 .btn.danger {
   margin-top: 8px;
   background: transparent;
@@ -888,6 +945,10 @@ dialog h2 {
   margin: 0 0 8px;
   font-family: var(--serif);
   font-size: 26px;
+}
+
+#recipe-form-title:focus {
+  outline: none;
 }
 
 dialog p {

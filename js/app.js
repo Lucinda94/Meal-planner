@@ -21,6 +21,13 @@ import {
   resolveAppBase,
   tagBaseRecipes,
 } from "./planner.js";
+import {
+  isSocialRecipeUrl,
+  normaliseRecipeUrl,
+  pageProxyUrls,
+  recipeFromDocument,
+  recipeFromText,
+} from "./recipe-fill.js";
 
 const STORAGE_KEY = "meal-planner.v1";
 const WEEK_FIELDS = ["name", "whose", "ingredients"];
@@ -44,6 +51,7 @@ const state = {
   editingId: null,
   pendingBackup: null,
   formReturn: null,
+  bringRun: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -526,6 +534,20 @@ function bindChrome() {
     renderShopping();
   });
   $("#add-recipe").addEventListener("click", () => openRecipeForm(null, $("#add-recipe")));
+  $("#bring-link").addEventListener("click", fillFromLink);
+  $("#bring-photo").addEventListener("click", () => $("#bring-file").click());
+  $("#bring-file").addEventListener("change", fillFromPhoto);
+  $("#bring-text-btn").addEventListener("click", fillFromText);
+  $("#bring-show-paste").addEventListener("click", () => {
+    showPasteBox("");
+    $("#bring-text").focus();
+  });
+  $("#bring-url").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      fillFromLink();
+    }
+  });
   $("#recipe-form").addEventListener("submit", saveRecipeForm);
   $("#recipe-cancel").addEventListener("click", closeRecipeForm);
   $("#recipe-delete").addEventListener("click", () => {
@@ -547,6 +569,7 @@ function bindChrome() {
   });
   $("#confirm-restore").addEventListener("click", confirmRestore);
   $("#recipe-dialog").addEventListener("close", () => {
+    cancelBringIn();
     if (state.formReturn) {
       state.formReturn.focus();
       state.formReturn = null;
@@ -857,13 +880,22 @@ function openRecipeForm(recipe, returnFocus) {
   $("#recipe-ingredients").value = recipe ? recipe.ingredients.join("\n") : "";
   $("#recipe-optional").value = recipe ? recipe.optional.join("\n") : "";
   $("#recipe-notes").value = recipe ? recipe.notes : "";
+  $("#recipe-notes").rows = 3;
+  resetBringIn();
+  $("#bring-in").hidden = Boolean(recipe);
   const error = $("#recipe-form-error");
   error.hidden = true;
   error.textContent = "";
   $("#recipe-delete").hidden = !recipe;
   const dialog = $("#recipe-dialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
-  $("#recipe-name").focus();
+  // Don't focus a field when adding. On a phone that opens the keyboard
+  // and covers the link and photo buttons before she has seen them.
+  if (recipe) $("#recipe-name").focus();
+  else {
+    $("#recipe-form-title").setAttribute("tabindex", "-1");
+    $("#recipe-form-title").focus();
+  }
 }
 
 function closeRecipeForm() {
@@ -973,6 +1005,266 @@ function confirmRestore() {
   for (const day of DAYS) paintDay(day.id);
   renderRecipes();
   renderShopping();
+}
+
+const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js";
+const QUANTITY_NOTE = " Lines with quantities usually sit under Other on the shopping list until you shorten them.";
+
+let ocrWorkerPromise = null;
+let ocrQueue = Promise.resolve();
+let ocrLogger = () => {};
+
+function cancelBringIn() {
+  state.bringRun += 1;
+  state.bringAbort?.abort();
+  state.bringAbort = null;
+}
+
+function resetBringIn() {
+  cancelBringIn();
+  $("#bring-url").value = "";
+  $("#bring-text").value = "";
+  $("#bring-file").value = "";
+  $("#bring-paste").hidden = true;
+  $("#bring-show-paste").hidden = false;
+  setBringBusy(false);
+  setBringStatus("", "");
+}
+
+function setBringBusy(busy, label) {
+  $("#bring-link").disabled = busy;
+  $("#bring-photo").disabled = busy;
+  $("#bring-text-btn").disabled = busy;
+  $("#bring-link").textContent = busy && label === "link" ? "Reading the link…" : "Fill in from link";
+  $("#bring-photo").textContent = busy && label === "photo" ? "Reading the photo…" : "Photo of a recipe";
+}
+
+function setBringStatus(message, tone) {
+  const status = $("#bring-status");
+  status.hidden = !message;
+  status.textContent = message || "";
+  status.className = tone === "error" ? "bring-status is-error" : tone === "ok" ? "bring-status is-ok" : "bring-status";
+}
+
+function showPasteBox(message) {
+  $("#bring-paste").hidden = false;
+  $("#bring-show-paste").hidden = true;
+  if (message) setBringStatus(message, "error");
+}
+
+function applyFilledRecipe(recipe) {
+  if (recipe.name) $("#recipe-name").value = recipe.name;
+  if (recipe.whose) $("#recipe-whose").value = recipe.whose;
+  if (recipe.ingredients.length) {
+    const ingredients = $("#recipe-ingredients");
+    ingredients.value = recipe.ingredients.join("\n");
+    ingredients.rows = Math.min(12, Math.max(4, recipe.ingredients.length + 1));
+  }
+  if (recipe.optional.length) {
+    const optional = $("#recipe-optional");
+    optional.value = recipe.optional.join("\n");
+    optional.rows = Math.min(8, Math.max(3, recipe.optional.length));
+  }
+  if (recipe.notes) {
+    const notes = $("#recipe-notes");
+    notes.value = recipe.notes;
+    notes.rows = Math.min(16, Math.max(3, recipe.notes.split("\n").length + 1));
+  }
+  const error = $("#recipe-form-error");
+  error.hidden = true;
+  error.textContent = "";
+  $("#recipe-name").scrollIntoView({ block: "nearest", behavior: "auto" });
+}
+
+function filledEnough(recipe) {
+  if (!recipe) return false;
+  return Boolean(recipe.name) || recipe.ingredients.length > 0 || recipe.optional.length > 0 || Boolean(recipe.notes);
+}
+
+async function fillFromLink() {
+  state.bringAbort?.abort();
+  const run = ++state.bringRun;
+  const controller = new AbortController();
+  state.bringAbort = controller;
+  const raw = $("#bring-url").value;
+  const normalised = normaliseRecipeUrl(raw);
+  if (!normalised) {
+    showPasteBox(raw.trim()
+      ? "That doesn't look like a web link. Paste the recipe text below, or add a photo."
+      : "Paste a recipe link first, or add a photo of the recipe.");
+    return;
+  }
+  $("#bring-url").value = normalised;
+  const social = isSocialRecipeUrl(normalised);
+  setBringBusy(true, "link");
+  setBringStatus(social ? "Trying the post…" : "Reading that link…", "");
+  try {
+    const body = await fetchRecipePage(normalised, controller.signal);
+    if (run !== state.bringRun) return;
+    const recipe = body ? recipeFromDocument(body, normalised) : null;
+    if (!filledEnough(recipe) || (recipe.ingredients.length === 0 && !recipe.notes.includes("\n"))) {
+      showPasteBox(social
+        ? "Facebook and Instagram don't share the post with this page. Paste the caption below, or add a photo of the recipe."
+        : "No recipe was found on that page. Paste the text below, or add a photo.");
+      return;
+    }
+    applyFilledRecipe(recipe);
+    const thin = recipe.ingredients.length < 2;
+    setBringStatus(
+      `${social ? "Filled in from the post." : "Filled in from the link."} Check it, then save.${thin ? "" : QUANTITY_NOTE}`,
+      "ok",
+    );
+  } catch {
+    if (run !== state.bringRun) return;
+    showPasteBox(social
+      ? "Facebook and Instagram don't share the post with this page. Paste the caption below, or add a photo of the recipe."
+      : "That link couldn't be read from here. Paste the recipe text below, or add a photo.");
+  } finally {
+    if (run === state.bringRun) setBringBusy(false);
+  }
+}
+
+function fillFromText() {
+  const parsed = recipeFromText($("#bring-text").value, { loose: true });
+  if (!filledEnough(parsed)) {
+    setBringStatus("That text didn't look like a recipe. You can type the name and ingredients yourself.", "error");
+    return;
+  }
+  applyFilledRecipe(parsed);
+  const useful = parsed.ingredients.length >= 2 || (parsed.ingredients.length >= 1 && parsed.notes);
+  setBringStatus(
+    useful
+      ? `Sorted the text into the form. Check it, then save.${QUANTITY_NOTE}`
+      : "Sorted what we could. Check it and fill in anything missing, then save.",
+    "ok",
+  );
+}
+
+async function fillFromPhoto(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    setBringStatus("Choose a photo or a screenshot of the recipe.", "error");
+    return;
+  }
+  state.bringAbort?.abort();
+  const run = ++state.bringRun;
+  const controller = new AbortController();
+  state.bringAbort = controller;
+  setBringBusy(true, "photo");
+  setBringStatus("Preparing the photo reader… The first time needs a connection, and it can take a minute.", "");
+  ocrLogger = (message) => {
+    if (run !== state.bringRun) return;
+    if (message.status === "recognizing text") {
+      const pct = Math.round((message.progress || 0) * 100);
+      setBringStatus(`Reading the photo… ${pct}%`, "");
+      return;
+    }
+    if (message.status) setBringStatus("Preparing the photo reader…", "");
+  };
+  try {
+    const image = await prepareRecipeImage(file);
+    if (run !== state.bringRun || controller.signal.aborted) return;
+    setBringStatus("Reading the photo…", "");
+    const result = await recogniseImage(image);
+    if (run !== state.bringRun) return;
+    const parsed = recipeFromText(result?.data?.text || "", { loose: true });
+    if (!filledEnough(parsed) || (parsed.ingredients.length < 2 && !parsed.notes)) {
+      showPasteBox("That photo didn't have enough recipe text. Try a clearer picture, paste the words, or type it in.");
+      return;
+    }
+    applyFilledRecipe(parsed);
+    setBringStatus(`Filled in from the photo. Check it, then save.${QUANTITY_NOTE}`, "ok");
+  } catch {
+    if (run !== state.bringRun) return;
+    showPasteBox("The photo couldn't be read. Check your connection and try again, or paste the words below.");
+  } finally {
+    if (run === state.bringRun) setBringBusy(false);
+  }
+}
+
+function recogniseImage(image) {
+  const job = ocrQueue.then(async () => {
+    const worker = await getOcrWorker();
+    return worker.recognize(image);
+  });
+  ocrQueue = job.then(() => {}, () => {});
+  return job;
+}
+
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = import(TESSERACT_URL).then((mod) => {
+      const tesseract = mod.createWorker ? mod : mod.default;
+      return tesseract.createWorker("eng", 1, {
+        logger: (message) => ocrLogger(message),
+      });
+    });
+    ocrWorkerPromise.catch(() => {
+      ocrWorkerPromise = null;
+    });
+  }
+  return ocrWorkerPromise;
+}
+
+async function prepareRecipeImage(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxEdge = 1800;
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+    return canvas;
+  } catch {
+    return file;
+  }
+}
+
+async function fetchRecipePage(pageUrl, parentSignal) {
+  let lastError = null;
+  for (const proxyUrl of pageProxyUrls(pageUrl)) {
+    if (parentSignal.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const response = await fetch(proxyUrl, {
+        signal: timeoutSignal(parentSignal, 12000),
+        credentials: "omit",
+        cache: "no-store",
+        headers: { Accept: "text/html, text/plain, */*" },
+      });
+      if (!response.ok) continue;
+      const body = await response.text();
+      if (body && body.trim()) return body;
+    } catch (error) {
+      if (parentSignal.aborted) throw error;
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return "";
+}
+
+function timeoutSignal(parent, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  const onAbort = () => controller.abort();
+  if (parent) {
+    if (parent.aborted) controller.abort();
+    else parent.addEventListener("abort", onAbort, { once: true });
+  }
+  controller.signal.addEventListener("abort", () => {
+    clearTimeout(timer);
+    parent?.removeEventListener("abort", onAbort);
+  }, { once: true });
+  return controller.signal;
 }
 
 function registerServiceWorker() {
