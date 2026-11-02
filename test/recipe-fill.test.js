@@ -86,12 +86,13 @@ test("reads schema.org Recipe JSON-LD into the form fields", () => {
   assert.equal(recipe.ingredients.includes("finely chopped"), false);
   assert.deepEqual(recipe.optional, ["lemon wedges to serve"]);
   assert.equal(recipe.ingredients.includes("bananas"), false);
-  assert.match(recipe.notes, /Makes 12/);
-  assert.match(recipe.notes, /Prep 10 mins/);
-  assert.match(recipe.notes, /Cook 20 mins/);
-  assert.match(recipe.notes, /1\. Put the flour, eggs, milk/);
-  assert.match(recipe.notes, /2\. Heat a frying pan/);
-  assert.match(recipe.notes, new RegExp(`From: ${pageUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(recipe.info, /Makes 12/);
+  assert.match(recipe.info, /Prep 10 mins/);
+  assert.match(recipe.info, /Cook 20 mins/);
+  assert.match(recipe.info, new RegExp(`From: ${pageUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(recipe.method, /1\. Put the flour, eggs, milk/);
+  assert.match(recipe.method, /2\. Heat a frying pan/);
+  assert.equal(recipe.notes, "");
 });
 
 test("reads a page that has no JSON-LD when the headings are there", () => {
@@ -112,9 +113,10 @@ test("reads a page that has no JSON-LD when the headings are there", () => {
   assert.ok(recipe);
   assert.equal(recipe.name, "Tomato soup");
   assert.deepEqual(recipe.ingredients, ["1 onion, finely chopped", "2 tins of tomatoes", "500ml stock"]);
-  assert.match(recipe.notes, /Serves 4/);
-  assert.match(recipe.notes, /Fry the onion until soft/);
-  assert.match(recipe.notes, /Add the tomatoes and stock/);
+  assert.match(recipe.info, /Serves 4/);
+  assert.match(recipe.method, /Fry the onion until soft/);
+  assert.match(recipe.method, /Add the tomatoes and stock/);
+  assert.equal(recipe.notes, "");
 });
 
 test("sorts a photographed or pasted recipe into title, ingredients and method", () => {
@@ -138,11 +140,12 @@ Ignore this.`;
   assert.equal(recipe.name, "Lemon chicken");
   assert.equal(recipe.whose, "Mum");
   assert.deepEqual(recipe.ingredients, ["2 chicken breasts", "1 lemon, zested", "2 tbsp olive oil"]);
-  assert.match(recipe.notes, /Serves 4/);
-  assert.match(recipe.notes, /Prep 15 mins/);
-  assert.match(recipe.notes, /Heat the oil in a pan/);
+  assert.match(recipe.info, /Serves 4/);
+  assert.match(recipe.info, /Prep 15 mins/);
+  assert.match(recipe.method, /Heat the oil in a pan/);
   assert.match(recipe.notes, /Lovely cold the next day/);
   assert.equal(/Ignore this/.test(recipe.notes), false);
+  assert.equal(/Heat the oil/.test(recipe.notes), false);
 });
 
 test("uses a social caption when the post itself cannot be opened", () => {
@@ -155,7 +158,8 @@ test("uses a social caption when the post itself cannot be opened", () => {
   assert.equal(recipe.name, "Traybake chicken");
   assert.ok(recipe.ingredients.includes("6 chicken thighs"));
   assert.ok(recipe.ingredients.includes("2 red onions"));
-  assert.match(recipe.notes, /Roast at 200C/);
+  assert.match(recipe.method, /Roast at 200C/);
+  assert.equal(/Roast at 200C/.test(recipe.notes), false);
 });
 
 test("a login wall with no caption does not invent a recipe", () => {
@@ -180,7 +184,8 @@ Method
   assert.equal(recipe.name, "Lemon chicken traybake");
   assert.equal(recipe.whose, "Mum");
   assert.deepEqual(recipe.ingredients, ["6 chicken thighs", "2 red onions", "2 tbsp olive oil"]);
-  assert.match(recipe.notes, /Heat the oven to 200C/);
+  assert.match(recipe.method, /Heat the oven to 200C/);
+  assert.equal(recipe.notes, "");
 });
 
 test("a reader transcript can supply the title", () => {
@@ -199,5 +204,6 @@ Cook in a hot pan.`;
   assert.ok(recipe);
   assert.equal(recipe.name, "Easy pancakes");
   assert.deepEqual(recipe.ingredients, ["100g plain flour", "2 large eggs", "300ml milk"]);
-  assert.match(recipe.notes, /Whisk everything together/);
+  assert.match(recipe.method, /Whisk everything together/);
+  assert.equal(/Whisk everything together/.test(recipe.notes), false);
 });

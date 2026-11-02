@@ -400,6 +400,8 @@ function cleanRecipeFields(recipe, id) {
     whose: String(recipe.whose || "").trim(),
     ingredients,
     optional,
+    info: String(recipe.info || "").trim(),
+    method: String(recipe.method || "").trim(),
     notes: String(recipe.notes || "").trim(),
   };
 }
@@ -465,6 +467,8 @@ function listsEqual(left, right) {
 function sameContent(left, right) {
   return left.name === right.name
     && left.whose === right.whose
+    && (left.info || "") === (right.info || "")
+    && (left.method || "") === (right.method || "")
     && left.notes === right.notes
     && listsEqual(left.ingredients, right.ingredients)
     && listsEqual(left.optional, right.optional);
@@ -493,6 +497,8 @@ export function overlayFromBackup(baseRecipes, backupRecipes) {
         whose: row.whose,
         ingredients: row.ingredients.slice(),
         optional: row.optional.slice(),
+        info: row.info || "",
+        method: row.method || "",
         notes: row.notes,
       });
       continue;
@@ -506,6 +512,8 @@ export function overlayFromBackup(baseRecipes, backupRecipes) {
         whose: row.whose,
         ingredients: row.ingredients.slice(),
         optional: row.optional.slice(),
+        info: row.info || "",
+        method: row.method || "",
         notes: row.notes,
       };
     }
@@ -566,15 +574,91 @@ function csvEscape(value) {
   return text;
 }
 
-/** Full recipe list in the same columns as recipes.csv. */
+/** Full recipe list. Method sits after Optional extras, and may be absent in an older file. */
+export const RECIPE_COLUMNS = ["Recipe", "Whose recipe", "Ingredients", "Optional extras", "Method", "Notes"];
+
+/** Servings, timing, and a source line. These are not recipe steps and not her own notes. */
+export function isInfoLine(line) {
+  const text = String(line || "").trim();
+  if (!text || text.length > 240) return false;
+  return /^(?:makes|serves?|yield)\b/i.test(text)
+    || /^(?:prep|cook|ready in|total)\b/i.test(text)
+    || /^from:\s+\S/i.test(text);
+}
+
+/**
+ * The Method cell can start with servings and timing, then a blank line, then the steps.
+ * A cell with no timing lines is all steps, so nothing already written there is dropped.
+ */
+export function splitMethodCell(value) {
+  const text = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return { info: "", method: "" };
+  const lines = text.split("\n");
+  const info = [];
+  let index = 0;
+  while (index < lines.length) {
+    const trimmed = lines[index].trim();
+    if (!trimmed) {
+      if (info.length) {
+        index += 1;
+        break;
+      }
+      index += 1;
+      continue;
+    }
+    if (!isInfoLine(trimmed)) break;
+    info.push(trimmed);
+    index += 1;
+  }
+  return {
+    info: info.join("\n"),
+    method: lines.slice(index).join("\n").trim(),
+  };
+}
+
+export function methodCell(recipe) {
+  const info = String(recipe?.info || "").trim();
+  const method = String(recipe?.method || "").trim();
+  if (info && method) return `${info}\n\n${method}`;
+  return info || method;
+}
+
+/**
+ * Offer to move numbered steps out of Notes. Prose without step numbers stays put,
+ * so an old comment such as "Use roasted tomatoes." is never rewritten on its own.
+ * Returns null when there are fewer than two numbered steps.
+ */
+export function splitNotedMethod(notes) {
+  const text = String(notes || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return null;
+  const info = [];
+  const steps = [];
+  const rest = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^(?:step\s+)?\d+[.)]\s+\S/i.test(trimmed)) steps.push(trimmed);
+    else if (isInfoLine(trimmed)) info.push(trimmed);
+    else rest.push(trimmed);
+  }
+  if (steps.length < 2) return null;
+  return {
+    info: info.join("\n"),
+    method: steps.join("\n"),
+    notes: rest.join("\n"),
+  };
+}
+
+/** Full recipe list in the same columns as recipes.csv, including Method when she has one. */
 export function recipesToCsv(recipes) {
-  const lines = [["Recipe", "Whose recipe", "Ingredients", "Optional extras", "Notes"].join(",")];
+  const lines = [RECIPE_COLUMNS.join(",")];
   for (const recipe of recipes) {
     lines.push([
       recipe.name,
       recipe.whose || "",
       (recipe.ingredients || []).join(", "),
       (recipe.optional || []).join(", "),
+      methodCell(recipe),
       recipe.notes || "",
     ].map(csvEscape).join(","));
   }
@@ -603,16 +687,20 @@ export function parseRecipes(csvText) {
   const ingredientCol = column("Ingredients");
   const optionalCol = column("Optional extras");
   const notesCol = column("Notes");
+  const methodCol = header.indexOf("Method");
 
   return rows.slice(1).flatMap((cells) => {
     const name = (cells[nameCol] || "").trim();
     if (!name) return [];
+    const methodParts = methodCol === -1 ? { info: "", method: "" } : splitMethodCell(cells[methodCol] || "");
     return [
       {
         name,
         whose: (cells[whoseCol] || "").trim(),
         ingredients: splitList(cells[ingredientCol] || ""),
         optional: splitList(cells[optionalCol] || ""),
+        info: methodParts.info,
+        method: methodParts.method,
         notes: (cells[notesCol] || "").trim(),
       },
     ];

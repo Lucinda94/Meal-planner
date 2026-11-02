@@ -31,9 +31,13 @@ The app always opens on the week plan.
 
 ## Change recipes on your phone
 
-On the **Recipes** tab, **Add recipe** and **Edit** use the same details as the sheet: name, whose recipe, ingredients, optional extras, and notes. Ingredients can be one per line (a comma stays inside the line), or, on a single line, separated by commas. **Delete recipe** asks before it removes a dinner, and takes it off the week plan too.
+On the **Recipes** tab, **Add recipe** and **Edit** use the same details as the sheet: name, whose recipe, ingredients, optional extras, method, serves and time, and notes. Ingredients can be one per line (a comma stays inside the line), or, on a single line, separated by commas. **Method** is the steps. **Notes** is for your own comments. **Delete recipe** asks before it removes a dinner, and takes it off the week plan too.
 
-**Add a recipe from a link or a photo.** On Add recipe, paste a link to a recipe page, or add a photo of a recipe. The form fills in the name, ingredients and method so you can correct them, then **Save recipe** stores it on this phone in the usual way. Facebook and Instagram usually cannot be read. Paste the caption, or add a photo, instead.
+The add and edit form stays closed until you tap **Add recipe** or **Edit**. It does not sit at the bottom of the week plan.
+
+If an older note is written as numbered steps, Edit offers **Move steps to Method**. Nothing moves until you tap it, and a comment with no step numbers is left in Notes.
+
+**Add a recipe from a link or a photo.** On Add recipe, paste a link to a recipe page, or add a photo of a recipe. The steps go into **Method**, and servings and timing go into **Serves and time**. **Notes** is left for your own comments. Correct anything, then **Save recipe** stores it on this phone in the usual way. Facebook and Instagram usually cannot be read. Paste the caption, or add a photo, instead.
 
 A recipe added here stays on this phone, on top of the spreadsheet. Updating `recipes.csv` from the Google Sheet does not remove it. It is not written back to the sheet, so it will not appear on another phone unless you use **Back up my recipes** and **Restore from backup**.
 
@@ -49,6 +53,15 @@ The starting dinners live in [`recipes.csv`](recipes.csv), exported from the Goo
 2. On GitHub, open this repository and choose **Add file → Upload files**.
 3. Drop the new CSV in, name it `recipes.csv` so it replaces the old one, and commit it to the `main` branch.
 
-Keep the same column headings: **Recipe**, **Whose recipe**, **Ingredients**, **Optional extras**, **Notes**. Ingredients and optional extras are comma-separated. If a dinner has no ingredients, the app says “Ingredients haven't been added yet”.
+Column headings, in this order:
+
+1. **Recipe**
+2. **Whose recipe**
+3. **Ingredients**
+4. **Optional extras**
+5. **Method**
+6. **Notes**
+
+**Method** is optional. A file exported before that column exists still loads, and those dinners keep their text in **Notes**. When **Method** is present, the steps go there. The cell may start with servings and timing (`Makes`, `Serves`, `Prep`, `Cook`, `Ready in`, or `From:`), then a blank line, then the steps. The app shows that opening part above the steps. **Notes** stays for comments. Ingredients and optional extras are comma-separated. If a dinner has no ingredients, the app says “Ingredients haven't been added yet”.
 
 The week plan, the shopping switches, and ticked items are saved on the phone, not in the spreadsheet.
