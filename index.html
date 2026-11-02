@@ -49,13 +49,14 @@
 
         <section id="panel-recipes" data-panel="recipes" role="tabpanel" aria-labelledby="tab-recipes" hidden>
           <h2 class="sr-only">Recipes</h2>
+          <p id="share-notice" class="notice" role="status" hidden></p>
           <div class="recipe-tools">
             <button type="button" class="btn primary" id="add-recipe">Add recipe</button>
             <button type="button" class="btn ghost" id="backup-recipes">Back up my recipes</button>
             <button type="button" class="btn ghost" id="restore-recipes">Restore from backup</button>
             <input id="restore-file" type="file" accept=".csv,text/csv" hidden />
           </div>
-          <p class="footnote recipe-footnote">Changes are saved on this phone. Back up if you want a copy.</p>
+          <p class="footnote recipe-footnote">A change is saved on this phone straight away. When sharing is set up, the same list is written into the recipe file for every phone.</p>
           <label class="search" for="recipe-search">
             <span class="sr-only">Search recipes</span>
             <input
@@ -208,6 +209,20 @@
       <div class="dialog-actions">
         <button type="button" class="btn ghost" id="cancel-restore">Cancel</button>
         <button type="button" class="btn primary" id="confirm-restore">Restore recipes</button>
+      </div>
+    </dialog>
+
+    <dialog id="share-dialog" aria-labelledby="share-title">
+      <h2 id="share-title">Share with everyone?</h2>
+      <p id="share-copy">This is saved on this phone. Enter the shared passcode to update the recipe list for every phone.</p>
+      <p id="share-error" class="form-error" role="alert" hidden></p>
+      <label class="field" for="share-passcode">
+        Shared passcode
+        <input id="share-passcode" name="share-passcode" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="share-skip">Keep it on this phone</button>
+        <button type="button" class="btn primary" id="share-send">Share for everyone</button>
       </div>
     </dialog>
 

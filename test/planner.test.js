@@ -19,6 +19,7 @@ import {
   recipesToCsv,
   relinkWeek,
   resolveAppBase,
+  pruneSyncedOverlay,
   splitNotedMethod,
   tagBaseRecipes,
 } from "../js/planner.js";
@@ -309,6 +310,58 @@ Prep 10 mins
   assert.equal(roundTrip[0].method, parsed[0].method);
   assert.equal(roundTrip[0].notes, parsed[0].notes);
   assert.match(recipesToCsv(parsed), /Optional extras,Method,Notes/);
+});
+
+test("phone edits drop off once the same dinner is in the shared file", () => {
+  const base = tagBaseRecipes(recipes);
+  const spanish = base.find((recipe) => recipe.name === "Spanish chicken");
+  const kept = pruneSyncedOverlay(base, {
+    added: [{
+      id: "local:new",
+      name: "Tomato rice",
+      whose: "",
+      ingredients: ["rice"],
+      optional: [],
+      info: "",
+      method: "",
+      notes: "",
+    }],
+    edited: {
+      [spanish.id]: {
+        id: spanish.id,
+        name: spanish.name,
+        whose: spanish.whose,
+        ingredients: spanish.ingredients,
+        optional: spanish.optional,
+        info: spanish.info,
+        method: spanish.method,
+        notes: "Extra paprika.",
+      },
+    },
+    deleted: ["csv:Fajitas"],
+  });
+  assert.equal(kept.added.length, 1);
+  assert.equal(kept.added[0].name, "Tomato rice");
+  assert.equal(kept.edited[spanish.id].notes, "Extra paprika.");
+  assert.deepEqual(kept.deleted, ["csv:Fajitas"]);
+
+  const landedBase = base
+    .filter((recipe) => recipe.name !== "Fajitas")
+    .map((recipe) => (recipe.id === spanish.id ? { ...recipe, notes: "Extra paprika." } : recipe));
+  landedBase.push({
+    id: "csv:Tomato rice",
+    name: "Tomato rice",
+    whose: "",
+    ingredients: ["rice"],
+    optional: [],
+    info: "",
+    method: "",
+    notes: "",
+  });
+  const settled = pruneSyncedOverlay(landedBase, kept);
+  assert.deepEqual(settled.added, []);
+  assert.deepEqual(settled.edited, {});
+  assert.deepEqual(settled.deleted, []);
 });
 
 test("numbered steps can be lifted out of notes, and a plain comment is left alone", () => {

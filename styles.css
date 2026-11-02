@@ -612,6 +612,10 @@ main {
   border-radius: 12px;
 }
 
+.notice.is-ok {
+  border-left-color: var(--sage);
+}
+
 .notice strong {
   display: block;
   margin-bottom: 2px;
